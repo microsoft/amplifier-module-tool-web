@@ -1,0 +1,114 @@
+Metadata-Version: 2.4
+Name: amplifier-mod-tool-web
+Version: 1.0.0
+Summary: Web tools (search and fetch) for Amplifier
+License: MIT
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: amplifier-core>=1.0.0
+Requires-Dist: aiohttp>=3.8.0
+Requires-Dist: beautifulsoup4>=4.11.0
+Requires-Dist: ddgs>=9.6.0
+Dynamic: license-file
+
+# Amplifier Web Tools Module
+
+Web tools for searching and fetching content from the internet.
+
+## Features
+
+### WebSearchTool
+- **Real web search** using DuckDuckGo (no API key required)
+- Automatic fallback to mock results if search fails
+- Configurable max results
+- Returns structured results with title, URL, and snippet
+
+### WebFetchTool
+- Fetch and parse web pages
+- Extract text from HTML content
+- Domain allowlist/blocklist support
+- Content size limits and timeout protection
+
+## Installation
+
+```bash
+pip install -e .
+```
+
+## Usage
+
+### Web Search
+
+```python
+from amplifier_mod_tool_web import WebSearchTool
+
+# Create tool with config
+tool = WebSearchTool({"max_results": 5})
+
+# Execute search
+result = await tool.execute({"query": "Python programming"})
+
+# Results include:
+# - title: Page title
+# - url: Page URL
+# - snippet: Brief description
+```
+
+### Web Fetch
+
+```python
+from amplifier_mod_tool_web import WebFetchTool
+
+# Create tool with config
+tool = WebFetchTool({
+    "timeout": 10,
+    "extract_text": True
+})
+
+# Fetch a webpage
+result = await tool.execute({"url": "https://example.com"})
+
+# Result includes extracted text content
+```
+
+## Configuration
+
+- `max_results`: Maximum search results to return (default: 5)
+- `timeout`: Request timeout in seconds (default: 10)
+- `max_size`: Maximum content size in bytes (default: 1MB)
+- `extract_text`: Extract text from HTML (default: True)
+- `allowed_domains`: List of allowed domains (empty = all allowed)
+- `blocked_domains`: List of blocked domains (includes localhost by default)
+
+## Dependencies
+
+- `ddgs`: DuckDuckGo search (no API key required)
+- `aiohttp`: Async HTTP client
+- `beautifulsoup4`: HTML parsing and text extraction
+- `amplifier-core`: Core amplifier functionality
+
+## Contributing
+
+> [!NOTE]
+> This project is not currently accepting external contributions, but we're actively working toward opening this up. We value community input and look forward to collaborating in the future. For now, feel free to fork and experiment!
+
+Most contributions require you to agree to a
+Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
+the rights to use your contribution. For details, visit [Contributor License Agreements](https://cla.opensource.microsoft.com).
+
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide
+a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
+provided by the bot. You will only need to do this once across all repos using our CLA.
+
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
+contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
+## Trademarks
+
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
+trademarks or logos is subject to and must follow
+[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks/usage/general).
+Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
+Any use of third-party trademarks or logos are subject to those third-party's policies.
