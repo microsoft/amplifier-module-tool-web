@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "amplifier-module-tool-web"
 version = "1.0.0"
-description = "Web tools (search and fetch) for Amplifier"
+description = "Reference Web tools (search and fetch) module for Amplifier"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
