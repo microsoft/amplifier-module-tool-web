@@ -5,12 +5,14 @@ Web tools for searching and fetching content from the internet.
 ## Features
 
 ### WebSearchTool
+
 - **Real web search** using DuckDuckGo (no API key required)
 - Automatic fallback to mock results if search fails
 - Configurable max results
 - Returns structured results with title, URL, and snippet
 
 ### WebFetchTool
+
 - Fetch and parse web pages
 - Extract text from HTML content
 - Domain allowlist/blocklist support
@@ -42,7 +44,7 @@ uv pip install -e .
 ### Web Search
 
 ```python
-from amplifier_mod_tool_web import WebSearchTool
+from amplifier_module_tool_web import WebSearchTool
 
 # Create tool with config
 tool = WebSearchTool({"max_results": 5})
@@ -59,7 +61,7 @@ result = await tool.execute({"query": "Python programming"})
 ### Web Fetch
 
 ```python
-from amplifier_mod_tool_web import WebFetchTool
+from amplifier_module_tool_web import WebFetchTool
 
 # Create tool with config
 tool = WebFetchTool({
