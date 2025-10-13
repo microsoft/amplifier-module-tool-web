@@ -16,10 +16,25 @@ Web tools for searching and fetching content from the internet.
 - Domain allowlist/blocklist support
 - Content size limits and timeout protection
 
+## Prerequisites
+
+- **Python 3.11+**
+- **[UV](https://github.com/astral-sh/uv)** - Fast Python package manager
+
+### Installing UV
+
+```bash
+# macOS/Linux/WSL
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
 ## Installation
 
 ```bash
-pip install -e .
+uv pip install -e .
 ```
 
 ## Usage
