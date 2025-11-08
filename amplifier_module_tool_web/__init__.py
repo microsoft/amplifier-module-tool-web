@@ -79,7 +79,7 @@ class WebSearchTool:
             def search_sync():
                 ddgs = DDGS()
                 results = []
-                for r in ddgs.text(query, max_results=self.max_results):
+                for r in ddgs.text(query, max_results=self.max_results):  # pyright: ignore[reportAttributeAccessIssue]
                     results.append(
                         {"title": r.get("title", ""), "url": r.get("href", ""), "snippet": r.get("body", "")}
                     )
