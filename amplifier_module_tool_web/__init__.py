@@ -3,6 +3,9 @@ Web tool module for Amplifier.
 Provides web search and fetch capabilities.
 """
 
+# Amplifier module metadata
+__amplifier_module_type__ = "tool"
+
 import asyncio
 import logging
 from typing import Any
