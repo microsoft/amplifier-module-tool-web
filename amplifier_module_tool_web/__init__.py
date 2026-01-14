@@ -10,7 +10,6 @@ import asyncio
 import logging
 from typing import Any
 from typing import Optional
-from urllib.parse import quote
 from urllib.parse import urlparse
 
 import aiohttp
@@ -26,16 +25,29 @@ async def mount(coordinator: ModuleCoordinator, config: dict[str, Any] | None = 
     """Mount web tools."""
     config = config or {}
 
+    # Create shared session at mount time for connection reuse
+    shared_session = aiohttp.ClientSession()
+
     tools = [
         WebSearchTool(config),
-        WebFetchTool(config),
+        WebFetchTool(config, shared_session=shared_session),
     ]
 
     for tool in tools:
         await coordinator.mount("tools", tool, name=tool.name)
 
     logger.info(f"Mounted {len(tools)} web tools")
-    return
+
+    # Return cleanup function to properly close the shared session
+    # Use asyncio.shield to protect close() from cancellation during Ctrl+C
+    async def cleanup():
+        if not shared_session.closed:
+            try:
+                await asyncio.shield(shared_session.close())
+            except asyncio.CancelledError:
+                pass  # Swallow cancellation during cleanup
+
+    return cleanup
 
 
 class WebSearchTool:
@@ -55,7 +67,9 @@ class WebSearchTool:
         """Return JSON schema for tool parameters."""
         return {
             "type": "object",
-            "properties": {"query": {"type": "string", "description": "Search query to execute"}},
+            "properties": {
+                "query": {"type": "string", "description": "Search query to execute"}
+            },
             "required": ["query"],
         }
 
@@ -69,7 +83,10 @@ class WebSearchTool:
             # Try real search first, fall back to mock if it fails
             results = await self._real_search(query)
 
-            return ToolResult(success=True, output={"query": query, "results": results, "count": len(results)})
+            return ToolResult(
+                success=True,
+                output={"query": query, "results": results, "count": len(results)},
+            )
 
         except Exception as e:
             logger.error(f"Search error: {e}")
@@ -84,7 +101,11 @@ class WebSearchTool:
                 results = []
                 for r in ddgs.text(query, max_results=self.max_results):  # pyright: ignore[reportAttributeAccessIssue]
                     results.append(
-                        {"title": r.get("title", ""), "url": r.get("href", ""), "snippet": r.get("body", "")}
+                        {
+                            "title": r.get("title", ""),
+                            "url": r.get("href", ""),
+                            "snippet": r.get("body", ""),
+                        }
                     )
                 return results
 
@@ -141,7 +162,11 @@ Response includes:
     CHUNK_SIZE = 8192
     PREVIEW_SIZE = 1000
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(
+        self,
+        config: dict[str, Any],
+        shared_session: Optional[aiohttp.ClientSession] = None,
+    ):
         self.config = config
         self.timeout = config.get("timeout", 10)
         self.default_limit = config.get("default_limit", self.DEFAULT_LIMIT)
@@ -158,6 +183,7 @@ Response includes:
             ],
         )
         self.extract_text = config.get("extract_text", True)
+        self._shared_session = shared_session
 
     @property
     def input_schema(self) -> dict:
@@ -200,31 +226,57 @@ Response includes:
 
         # Validate URL
         if not self._is_valid_url(url):
-            return ToolResult(success=False, error={"message": f"Invalid or blocked URL: {url}"})
+            return ToolResult(
+                success=False, error={"message": f"Invalid or blocked URL: {url}"}
+            )
 
         try:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=self.timeout), headers={"User-Agent": "Amplifier/1.0"}
-                ) as response,
-            ):
-                # Check response
-                if response.status != 200:
-                    return ToolResult(success=False, error={"message": f"HTTP {response.status}: {response.reason}"})
+            # Use shared session if available, otherwise create one for this request
+            session = self._shared_session
+            owns_session = False
+            if session is None or session.closed:
+                session = aiohttp.ClientSession()
+                owns_session = True
 
-                # Get content length hint (may not be accurate for compressed/chunked)
-                content_length_header = response.headers.get("Content-Length")
-                declared_size = int(content_length_header) if content_length_header else None
+            try:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    headers={"User-Agent": "Amplifier/1.0"},
+                ) as response:
+                    # Check response
+                    if response.status != 200:
+                        return ToolResult(
+                            success=False,
+                            error={
+                                "message": f"HTTP {response.status}: {response.reason}"
+                            },
+                        )
 
-                # Stream content with hard limit to avoid memory issues
-                if save_to_file:
-                    return await self._fetch_to_file(response, url, save_to_file, declared_size)
-                else:
-                    return await self._fetch_with_limit(response, url, offset, limit, declared_size)
+                    # Get content length hint (may not be accurate for compressed/chunked)
+                    content_length_header = response.headers.get("Content-Length")
+                    declared_size = (
+                        int(content_length_header) if content_length_header else None
+                    )
+
+                    # Stream content with hard limit to avoid memory issues
+                    if save_to_file:
+                        return await self._fetch_to_file(
+                            response, url, save_to_file, declared_size
+                        )
+                    else:
+                        return await self._fetch_with_limit(
+                            response, url, offset, limit, declared_size
+                        )
+            finally:
+                # Only close if we created the session ourselves
+                if owns_session and not session.closed:
+                    await session.close()
 
         except TimeoutError:
-            return ToolResult(success=False, error={"message": f"Timeout fetching {url}"})
+            return ToolResult(
+                success=False, error={"message": f"Timeout fetching {url}"}
+            )
         except Exception as e:
             logger.error(f"Fetch error: {e}")
             return ToolResult(success=False, error={"message": str(e)})
@@ -359,7 +411,9 @@ Response includes:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
         except Exception as e:
-            return ToolResult(success=False, error={"message": f"Failed to write file: {e}"})
+            return ToolResult(
+                success=False, error={"message": f"Failed to write file: {e}"}
+            )
 
         # Create preview
         preview = text[: self.PREVIEW_SIZE]
@@ -400,7 +454,9 @@ Response includes:
 
             # Check allowed domains if configured
             if self.allowed_domains:
-                allowed = any(domain in parsed.netloc for domain in self.allowed_domains)
+                allowed = any(
+                    domain in parsed.netloc for domain in self.allowed_domains
+                )
                 if not allowed:
                     logger.warning(f"Domain not in allowlist: {parsed.netloc}")
                     return False
@@ -425,7 +481,9 @@ Response includes:
 
                 # Clean up whitespace
                 lines = (line.strip() for line in text.splitlines())
-                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                chunks = (
+                    phrase.strip() for line in lines for phrase in line.split("  ")
+                )
                 text = "\n".join(chunk for chunk in chunks if chunk)
 
                 return text
