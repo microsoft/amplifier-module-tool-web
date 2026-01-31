@@ -25,6 +25,14 @@ async def mount(coordinator: ModuleCoordinator, config: dict[str, Any] | None = 
     """Mount web tools."""
     config = config or {}
 
+    # Get session.working_dir capability if not explicitly configured
+    # This ensures save_to_file paths are resolved against the session's working directory
+    if "working_dir" not in config:
+        working_dir = coordinator.get_capability("session.working_dir")
+        if working_dir:
+            config["working_dir"] = working_dir
+            logger.debug(f"Using session.working_dir: {working_dir}")
+
     # Create shared session at mount time for connection reuse
     shared_session = aiohttp.ClientSession()
 
@@ -184,6 +192,8 @@ Response includes:
         )
         self.extract_text = config.get("extract_text", True)
         self._shared_session = shared_session
+        # Working directory for resolving relative paths (from session.working_dir capability)
+        self.working_dir = config.get("working_dir")
 
     @property
     def input_schema(self) -> dict:
@@ -408,6 +418,9 @@ Response includes:
         # Write to file
         try:
             path = Path(file_path).expanduser()
+            # Resolve relative paths against working_dir (from session.working_dir capability)
+            if not path.is_absolute() and self.working_dir:
+                path = Path(self.working_dir) / path
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
         except Exception as e:
