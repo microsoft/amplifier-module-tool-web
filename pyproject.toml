@@ -38,4 +38,7 @@ allow-direct-references = true
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 asyncio_mode = "strict"
+markers = [
+    "integration: hits real external APIs (deselect with '-m not integration')",
+]
 
