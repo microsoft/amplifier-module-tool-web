@@ -70,6 +70,7 @@ class WebSearchTool:
         self.api_key = config.get("api_key")
         self.max_results = config.get("max_results", 5)
         self._search_timeout = config.get("search_timeout", 30)
+        self._search_lock = asyncio.Lock()
 
     @property
     def input_schema(self) -> dict:
@@ -114,39 +115,40 @@ class WebSearchTool:
 
     async def _real_search(self, query: str) -> list:
         """Perform real web search using DuckDuckGo."""
-        try:
-            # Use sync DDGS in async context
-            def search_sync():
-                ddgs = DDGS()
-                results = []
-                for r in ddgs.text(query, max_results=self.max_results):  # pyright: ignore[reportAttributeAccessIssue]
-                    results.append(
-                        {
-                            "title": r.get("title", ""),
-                            "url": r.get("href", ""),
-                            "snippet": r.get("body", ""),
-                        }
-                    )
-                return results
+        async with self._search_lock:
+            try:
+                # Use sync DDGS in async context
+                def search_sync():
+                    ddgs = DDGS()
+                    results = []
+                    for r in ddgs.text(query, max_results=self.max_results):  # pyright: ignore[reportAttributeAccessIssue]
+                        results.append(
+                            {
+                                "title": r.get("title", ""),
+                                "url": r.get("href", ""),
+                                "snippet": r.get("body", ""),
+                            }
+                        )
+                    return results
 
-            # Run in thread pool with timeout safety net.
-            # NOTE: We use asyncio.wait() instead of asyncio.wait_for() because
-            # Python 3.11's wait_for waits for cancellation to complete, but
-            # run_in_executor threads cannot be cancelled — causing a hang.
-            # asyncio.wait() returns promptly on timeout without cancelling.
-            loop = asyncio.get_event_loop()
-            fut = loop.run_in_executor(None, search_sync)
-            done, _ = await asyncio.wait({fut}, timeout=self._search_timeout)
-            if not done:
-                raise asyncio.TimeoutError()
-            return fut.result()
+                # Run in thread pool with timeout safety net.
+                # NOTE: We use asyncio.wait() instead of asyncio.wait_for() because
+                # Python 3.11's wait_for waits for cancellation to complete, but
+                # run_in_executor threads cannot be cancelled — causing a hang.
+                # asyncio.wait() returns promptly on timeout without cancelling.
+                loop = asyncio.get_event_loop()
+                fut = loop.run_in_executor(None, search_sync)
+                done, _ = await asyncio.wait({fut}, timeout=self._search_timeout)
+                if not done:
+                    raise asyncio.TimeoutError()
+                return fut.result()
 
-        except asyncio.TimeoutError:
-            raise  # Propagate to execute() — timeout is a serious signal, not a mock fallback
-        except Exception as e:
-            logger.warning(f"DuckDuckGo search failed: {e}, falling back to mock")
-            # Fallback to mock on error
-            return await self._mock_search(query)
+            except asyncio.TimeoutError:
+                raise  # Propagate to execute() — timeout is a serious signal, not a mock fallback
+            except Exception as e:
+                logger.warning(f"DuckDuckGo search failed: {e}, falling back to mock")
+                # Fallback to mock on error
+                return await self._mock_search(query)
 
     async def _mock_search(self, query: str) -> list:
         """Mock search implementation."""
