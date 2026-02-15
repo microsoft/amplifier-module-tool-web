@@ -136,10 +136,14 @@ class WebSearchTool:
                 # Python 3.11's wait_for waits for cancellation to complete, but
                 # run_in_executor threads cannot be cancelled — causing a hang.
                 # asyncio.wait() returns promptly on timeout without cancelling.
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 fut = loop.run_in_executor(None, search_sync)
                 done, _ = await asyncio.wait({fut}, timeout=self._search_timeout)
                 if not done:
+                    fut.cancel()  # Won't kill the thread, but good hygiene
+                    # Hold the lock for a grace period so the next search doesn't
+                    # collide with the orphaned thread still inside primp's tokio runtime.
+                    await asyncio.wait({fut}, timeout=5)  # drain grace
                     raise asyncio.TimeoutError()
                 return fut.result()
 

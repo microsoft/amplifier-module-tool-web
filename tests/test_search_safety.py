@@ -6,7 +6,11 @@ import time
 from unittest.mock import patch
 
 import pytest
-from ddgs.ddgs import DDGS  # Real class, not the lazy-loading _DDGSProxy
+
+# Import the real DDGS class, not the lazy-loading _DDGSProxy from ddgs.__init__.
+# The proxy's metaclass intercepts attribute access, making patch.object ineffective
+# on instances. Pinned to ddgs<10 so this internal path is stable.
+from ddgs.ddgs import DDGS
 
 from amplifier_module_tool_web import WebSearchTool
 
