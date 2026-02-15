@@ -69,6 +69,7 @@ class WebSearchTool:
         self.search_engine = config.get("search_engine", "mock")
         self.api_key = config.get("api_key")
         self.max_results = config.get("max_results", 5)
+        self._search_timeout = config.get("search_timeout", 30)
 
     @property
     def input_schema(self) -> dict:
@@ -96,6 +97,17 @@ class WebSearchTool:
                 output={"query": query, "results": results, "count": len(results)},
             )
 
+        except asyncio.TimeoutError:
+            return ToolResult(
+                success=False,
+                error={
+                    "message": (
+                        f"web_search timed out after {self._search_timeout}s for query: {query!r}. "
+                        "The search backend may be unresponsive. "
+                        "Try again or use a different query."
+                    )
+                },
+            )
         except Exception as e:
             logger.error(f"Search error: {e}")
             return ToolResult(success=False, error={"message": str(e)})
@@ -117,11 +129,20 @@ class WebSearchTool:
                     )
                 return results
 
-            # Run in thread pool to avoid blocking
+            # Run in thread pool with timeout safety net.
+            # NOTE: We use asyncio.wait() instead of asyncio.wait_for() because
+            # Python 3.11's wait_for waits for cancellation to complete, but
+            # run_in_executor threads cannot be cancelled — causing a hang.
+            # asyncio.wait() returns promptly on timeout without cancelling.
             loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(None, search_sync)
-            return results
+            fut = loop.run_in_executor(None, search_sync)
+            done, _ = await asyncio.wait({fut}, timeout=self._search_timeout)
+            if not done:
+                raise asyncio.TimeoutError()
+            return fut.result()
 
+        except asyncio.TimeoutError:
+            raise  # Propagate to execute() — timeout is a serious signal, not a mock fallback
         except Exception as e:
             logger.warning(f"DuckDuckGo search failed: {e}, falling back to mock")
             # Fallback to mock on error
