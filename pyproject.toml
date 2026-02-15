@@ -11,7 +11,7 @@ authors = [
 dependencies = [
     "aiohttp>=3.8.0",
     "beautifulsoup4>=4.11.0",
-    "ddgs>=9.6.0",
+    "ddgs>=9.6.0,<10",
 ]
 
 [project.entry-points."amplifier.modules"]
