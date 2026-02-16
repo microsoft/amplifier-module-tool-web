@@ -138,6 +138,7 @@ dependencies = [
     { name = "aiohttp" },
     { name = "beautifulsoup4" },
     { name = "ddgs" },
+    { name = "primp" },
 ]
 
 [package.metadata]
@@ -145,6 +146,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.8.0" },
     { name = "beautifulsoup4", specifier = ">=4.11.0" },
     { name = "ddgs", specifier = ">=9.6.0" },
+    { name = "primp", specifier = ">=0.15.0,<1.0.0" },
 ]
 
 [[package]]
