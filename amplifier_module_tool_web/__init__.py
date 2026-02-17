@@ -85,7 +85,10 @@ class WebSearchTool:
         """Execute web search."""
         query = input.get("query")
         if not query:
-            return ToolResult(success=False, error={"message": "Query is required"})
+            error_msg = "Query is required"
+            return ToolResult(
+                success=False, output=error_msg, error={"message": error_msg}
+            )
 
         try:
             # Try real search first, fall back to mock if it fails
@@ -98,7 +101,10 @@ class WebSearchTool:
 
         except Exception as e:
             logger.error(f"Search error: {e}")
-            return ToolResult(success=False, error={"message": str(e)})
+            error_msg = str(e)
+            return ToolResult(
+                success=False, output=error_msg, error={"message": error_msg}
+            )
 
     async def _real_search(self, query: str) -> list:
         """Perform real web search using DuckDuckGo."""
@@ -228,7 +234,10 @@ Response includes:
         """Fetch content from URL with streaming and truncation support."""
         url = input.get("url")
         if not url:
-            return ToolResult(success=False, error={"message": "URL is required"})
+            error_msg = "URL is required"
+            return ToolResult(
+                success=False, output=error_msg, error={"message": error_msg}
+            )
 
         save_to_file = input.get("save_to_file")
         offset = input.get("offset", 0)
@@ -284,12 +293,16 @@ Response includes:
                     await session.close()
 
         except TimeoutError:
+            error_msg = f"Timeout fetching {url}"
             return ToolResult(
-                success=False, error={"message": f"Timeout fetching {url}"}
+                success=False, output=error_msg, error={"message": error_msg}
             )
         except Exception as e:
             logger.error(f"Fetch error: {e}")
-            return ToolResult(success=False, error={"message": str(e)})
+            error_msg = str(e)
+            return ToolResult(
+                success=False, output=error_msg, error={"message": error_msg}
+            )
 
     async def _fetch_with_limit(
         self,
