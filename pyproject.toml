@@ -9,7 +9,7 @@ authors = [
     { name = "Microsoft MADE:Explorations Team" },
 ]
 dependencies = [
-    "aiohttp>=3.8.0",
+    "aiohttp>=3.14.1",
     "beautifulsoup4>=4.11.0",
     "ddgs>=9.6.0",
     "primp>=0.15.0,<1.0.0",
