@@ -20,6 +20,11 @@ from ddgs import DDGS
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on a single blocking DuckDuckGo search. A worker thread cannot be
+# cancelled, so this frees the caller rather than the thread -- but without it a
+# single wedged search blocks the session forever.
+DEFAULT_SEARCH_TIMEOUT = 30.0
+
 
 async def mount(coordinator: ModuleCoordinator, config: dict[str, Any] | None = None):
     """Mount web tools."""
@@ -69,6 +74,7 @@ class WebSearchTool:
         self.search_engine = config.get("search_engine", "mock")
         self.api_key = config.get("api_key")
         self.max_results = config.get("max_results", 5)
+        self.search_timeout = config.get("search_timeout", DEFAULT_SEARCH_TIMEOUT)
 
     @property
     def input_schema(self) -> dict:
@@ -123,10 +129,20 @@ class WebSearchTool:
                     )
                 return results
 
-            # Run in thread pool to avoid blocking
-            loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(None, search_sync)
+            # Run in a worker thread so the event loop is not blocked, bounded by
+            # a timeout. asyncio cannot cancel a thread that is already wedged, so
+            # the timeout releases the caller and leaks the thread -- that is still
+            # strictly better than hanging the session with no way out.
+            results = await asyncio.wait_for(
+                asyncio.to_thread(search_sync), timeout=self.search_timeout
+            )
             return results
+
+        except TimeoutError:
+            logger.warning(
+                f"DuckDuckGo search exceeded {self.search_timeout}s, falling back to mock"
+            )
+            return await self._mock_search(query)
 
         except Exception as e:
             logger.warning(f"DuckDuckGo search failed: {e}, falling back to mock")
