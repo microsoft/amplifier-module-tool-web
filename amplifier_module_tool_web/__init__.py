@@ -176,6 +176,33 @@ Response includes:
     CHUNK_SIZE = 8192
     PREVIEW_SIZE = 1000
 
+    # Content types that are always binary. Used only as a supporting signal --
+    # the NUL-byte check in _looks_binary is the primary, structural test.
+    BINARY_TYPE_PREFIXES = ("image/", "audio/", "video/", "font/")
+    BINARY_TYPES = frozenset(
+        {
+            "application/pdf",
+            "application/zip",
+            "application/gzip",
+            "application/x-gzip",
+            "application/x-tar",
+            "application/x-bzip2",
+            "application/x-7z-compressed",
+            "application/vnd.rar",
+            "application/octet-stream",
+            "application/msword",
+            "application/vnd.ms-excel",
+            "application/vnd.ms-powerpoint",
+            "application/epub+zip",
+            "application/wasm",
+            "application/java-archive",
+            "application/x-shockwave-flash",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        }
+    )
+
     def __init__(
         self,
         config: dict[str, Any],
@@ -357,15 +384,32 @@ Response includes:
         if declared_size and (actual_total is None or declared_size > actual_total):
             actual_total = declared_size
 
-        # Combine chunks and decode
+        # Combine chunks
         raw_content = b"".join(chunks)
+        content_type = response.content_type or ""
+
+        # Refuse to inline binary rather than force-decoding it into the
+        # transcript. Decoding with errors="replace" would emit a wall of
+        # replacement characters that is both useless and expensive in context.
+        if self._looks_binary(raw_content, content_type):
+            error_msg = (
+                f"Refusing to return binary content as text "
+                f"(content-type: {content_type or 'unknown'}, "
+                f"{actual_total if actual_total is not None else len(raw_content)} bytes). "
+                f"Decoding it would produce replacement characters, not usable text. "
+                f"Use save_to_file to download it intact instead."
+            )
+            return ToolResult(
+                success=False, output=error_msg, error={"message": error_msg}
+            )
+
+        # Decode text content
         try:
             content = raw_content.decode("utf-8", errors="replace")
         except Exception:
             content = raw_content.decode("latin-1", errors="replace")
 
         # Extract text if requested and HTML
-        content_type = response.content_type or ""
         if self.extract_text:
             text = self._extract_text(content, content_type)
         else:
@@ -414,19 +458,21 @@ Response includes:
             total_bytes += len(chunk)
 
         raw_content = b"".join(chunks)
-
-        # Decode content
-        try:
-            content = raw_content.decode("utf-8", errors="replace")
-        except Exception:
-            content = raw_content.decode("latin-1", errors="replace")
-
-        # Extract text if HTML
         content_type = response.content_type or ""
-        if self.extract_text:
-            text = self._extract_text(content, content_type)
-        else:
-            text = content
+        is_binary = self._looks_binary(raw_content, content_type)
+
+        # Only decode when the payload is actually text. Decoding binary with
+        # errors="replace" is lossy and irreversible -- the bytes cannot be
+        # recovered from the resulting string.
+        text = ""
+        if not is_binary:
+            try:
+                content = raw_content.decode("utf-8", errors="replace")
+            except Exception:
+                content = raw_content.decode("latin-1", errors="replace")
+
+            # Extract text if HTML
+            text = self._extract_text(content, content_type) if self.extract_text else content
 
         # Write to file
         try:
@@ -435,16 +481,29 @@ Response includes:
             if not path.is_absolute() and self.working_dir:
                 path = Path(self.working_dir) / path
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
+            if is_binary:
+                # Preserve the original bytes verbatim
+                path.write_bytes(raw_content)
+            else:
+                path.write_text(text, encoding="utf-8")
         except Exception as e:
             return ToolResult(
                 success=False, error={"message": f"Failed to write file: {e}"}
             )
 
         # Create preview
-        preview = text[: self.PREVIEW_SIZE]
-        if len(text) > self.PREVIEW_SIZE:
-            preview += f"\n\n[... {len(text) - self.PREVIEW_SIZE} more characters saved to {file_path}]"
+        if is_binary:
+            preview = (
+                f"[Binary content ({content_type or 'unknown type'}), "
+                f"{total_bytes} bytes saved verbatim to {file_path}. "
+                f"No text preview available.]"
+            )
+            saved_bytes = len(raw_content)
+        else:
+            preview = text[: self.PREVIEW_SIZE]
+            if len(text) > self.PREVIEW_SIZE:
+                preview += f"\n\n[... {len(text) - self.PREVIEW_SIZE} more characters saved to {file_path}]"
+            saved_bytes = len(text.encode("utf-8"))
 
         return ToolResult(
             success=True,
@@ -455,9 +514,32 @@ Response includes:
                 "truncated": False,
                 "total_bytes": total_bytes,
                 "saved_to": str(path),
-                "saved_bytes": len(text.encode("utf-8")),
+                "saved_bytes": saved_bytes,
             },
         )
+
+    def _looks_binary(self, raw: bytes, content_type: str) -> bool:
+        """Detect binary payloads before any decode is attempted.
+
+        The primary signal is a NUL byte, which cannot occur in valid UTF-8
+        text. Unlike a strict-decode attempt or a U+FFFD scan, it is unaffected
+        by the byte-window slicing in _fetch_with_limit, which can cut a
+        multibyte character in half and make legitimate text look invalid.
+
+        Content-type is a secondary signal only, for binary formats whose
+        sampled window might happen to contain no NUL bytes. Anything not
+        positively identified as binary is treated as text, so unusual but
+        legitimate text types are never refused.
+        """
+        if b"\x00" in raw:
+            return True
+
+        ct = (content_type or "").lower().split(";")[0].strip()
+        if not ct:
+            return False
+        if ct.startswith(self.BINARY_TYPE_PREFIXES):
+            return True
+        return ct in self.BINARY_TYPES
 
     def _is_valid_url(self, url: str) -> bool:
         """Validate URL for safety."""
