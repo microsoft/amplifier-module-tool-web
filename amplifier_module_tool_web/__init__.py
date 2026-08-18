@@ -166,6 +166,10 @@ For larger content:
 - Use save_to_file parameter to save full content to a file
 - Use offset/limit parameters to paginate through large content
 
+Binary content (PDFs, images, archives) cannot be returned inline as text and
+will be refused. Use save_to_file to download it intact -- the bytes are
+written to disk exactly as received.
+
 Response includes:
 - truncated: boolean indicating if content was cut off
 - total_bytes: original content size (when available)
@@ -178,6 +182,11 @@ Response includes:
 
     # Content types that are always binary. Used only as a supporting signal --
     # the NUL-byte check in _looks_binary is the primary, structural test.
+    #
+    # "application/octet-stream" is deliberately NOT listed. It means "unknown",
+    # not "binary": servers commonly fall back to it for plain text they failed
+    # to identify. Treating it as binary would refuse legitimate text. Real
+    # binary served under it is still caught by the NUL-byte check.
     BINARY_TYPE_PREFIXES = ("image/", "audio/", "video/", "font/")
     BINARY_TYPES = frozenset(
         {
@@ -189,7 +198,6 @@ Response includes:
             "application/x-bzip2",
             "application/x-7z-compressed",
             "application/vnd.rar",
-            "application/octet-stream",
             "application/msword",
             "application/vnd.ms-excel",
             "application/vnd.ms-powerpoint",
@@ -472,7 +480,11 @@ Response includes:
                 content = raw_content.decode("latin-1", errors="replace")
 
             # Extract text if HTML
-            text = self._extract_text(content, content_type) if self.extract_text else content
+            text = (
+                self._extract_text(content, content_type)
+                if self.extract_text
+                else content
+            )
 
         # Write to file
         try:
