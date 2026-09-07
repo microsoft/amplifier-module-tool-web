@@ -1,0 +1,45 @@
+# GREEN run 34157597450 — https://github.com/microsoft/amplifier-module-tool-web/actions/runs/34157597450
+# head bc022d73f0f401eff3a82f94b0151ed28d629bce (packaging fix + workflow only)
+# Excerpt: the four checks' decisive lines. Full log retrieved with: gh run view 34157597450 --log
+
+Tests (py3.11)	Install dependencies	2026-09-07T19:58:34.1013432Z  + ruff==0.16.6
+Tests (py3.11)	Run test suite	2026-09-07T19:58:34.1196151Z [36;1muv run --frozen --no-sync pytest -q[0m
+Tests (py3.11)	Run test suite	2026-09-07T19:58:34.1233661Z   UV_PYTHON: 3.11
+Tests (py3.11)	Run test suite	2026-09-07T19:58:34.1234073Z   VIRTUAL_ENV: /home/runner/work/amplifier-module-tool-web/amplifier-module-tool-web/.venv
+Tests (py3.11)	Run test suite	2026-09-07T19:58:35.5009398Z .............                                                            [100%]
+Tests (py3.11)	Run test suite	2026-09-07T19:58:35.5010113Z 13 passed in 0.42s
+Tests (py3.13)	Install dependencies	2026-09-07T19:58:34.8471783Z  + ruff==0.16.6
+Tests (py3.13)	Run test suite	2026-09-07T19:58:34.8614765Z [36;1muv run --frozen --no-sync pytest -q[0m
+Tests (py3.13)	Run test suite	2026-09-07T19:58:34.8654516Z   UV_PYTHON: 3.13
+Tests (py3.13)	Run test suite	2026-09-07T19:58:34.8654919Z   VIRTUAL_ENV: /home/runner/work/amplifier-module-tool-web/amplifier-module-tool-web/.venv
+Tests (py3.13)	Run test suite	2026-09-07T19:58:36.3975227Z .............                                                            [100%]
+Tests (py3.13)	Run test suite	2026-09-07T19:58:36.3976033Z 13 passed in 0.45s
+Tests (py3.12)	Install dependencies	2026-09-07T19:58:33.3032061Z  + ruff==0.16.6
+Tests (py3.12)	Run test suite	2026-09-07T19:58:33.3104712Z [36;1muv run --frozen --no-sync pytest -q[0m
+Tests (py3.12)	Run test suite	2026-09-07T19:58:33.3127556Z   UV_PYTHON: 3.12
+Tests (py3.12)	Run test suite	2026-09-07T19:58:33.3127890Z   VIRTUAL_ENV: /home/runner/work/amplifier-module-tool-web/amplifier-module-tool-web/.venv
+Tests (py3.12)	Run test suite	2026-09-07T19:58:34.5634149Z .............                                                            [100%]
+Tests (py3.12)	Run test suite	2026-09-07T19:58:34.5634703Z 13 passed in 0.38s
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.1491737Z [36;1muv run --frozen --group dev ruff check --isolated --select E4,E7,E9,F .[0m
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.1728671Z Using CPython 3.12.3 interpreter at: /usr/bin/python3
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.1730883Z Creating virtual environment at: .venv
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.1849817Z    Building amplifier-module-tool-web @ file:///home/runner/work/amplifier-module-tool-web/amplifier-module-tool-web
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.2587793Z Downloading pydantic-core (2.0MiB)
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.2590160Z Downloading lxml (5.0MiB)
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.2592191Z Downloading primp (3.1MiB)
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.2594164Z Downloading aiohttp (1.7MiB)
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.2596022Z Downloading brotli (1.4MiB)
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.2612074Z Downloading pygments (1.2MiB)
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.2616490Z Downloading ruff (9.8MiB)
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.2618327Z Downloading amplifier-core (8.3MiB)
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.3627238Z  Downloaded brotli
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.3691232Z  Downloaded pydantic-core
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.3719711Z  Downloaded aiohttp
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.3769195Z  Downloaded pygments
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.3816750Z  Downloaded primp
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.4286162Z  Downloaded lxml
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.4389838Z  Downloaded ruff
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.4441719Z  Downloaded amplifier-core
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.7074849Z       Built amplifier-module-tool-web @ file:///home/runner/work/amplifier-module-tool-web/amplifier-module-tool-web
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.7399959Z Installed 42 packages in 30ms
+Lint	ruff check (pinned 0.16.6, pinned rule set)	2026-09-07T19:58:31.7529067Z All checks passed!

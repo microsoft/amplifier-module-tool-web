@@ -88,7 +88,7 @@ FAILED tests/test_red_proof_DELIBERATE_FAILURE.py::test_deliberate_failure_to_pr
 
 `13 passed` **alongside** the failure is the load-bearing evidence: the real suite collected and executed, and the red is a genuine **test** failure. A setup or import error would have shown `0 passed` and proved nothing. Lint failed separately and for its own reason (`F821 Undefined name`, `Found 1 error.`).
 
-Full failed-job log committed at `evidence/red-run-34157444051-failed-jobs.log`.
+Full failed-job log committed at `evidence/red-run-34157444051-failed-jobs.txt`.
 
 **Scratch cleanup — verified, not assumed.** PR **#16 CLOSED**; branch deleted with `git push origin --delete ci/red-proof-j1e6`, then confirmed by remote read:
 
@@ -99,7 +99,7 @@ $ git ls-remote --heads origin ci/red-proof-j1e6
 
 **GREEN — run `34157597450`** — https://github.com/microsoft/amplifier-module-tool-web/actions/runs/34157597450
 
-All four checks green on `bc022d73f0f401eff3a82f94b0151ed28d629bce` (packaging fix + workflow only): Lint `All checks passed!`; Tests `13 passed` on 3.11, 3.12 and 3.13. Excerpt at `evidence/green-run-34157597450-excerpt.log`.
+All four checks green on `bc022d73f0f401eff3a82f94b0151ed28d629bce` (packaging fix + workflow only): Lint `All checks passed!`; Tests `13 passed` on 3.11, 3.12 and 3.13. Excerpt at `evidence/green-run-34157597450-excerpt.txt`.
 
 ---
 
@@ -142,7 +142,8 @@ No source file touched; no test changed or added.
 1. **`# noqa: <CODE>` written inside PROSE silently suppresses the defect you are planting.** My first `F821` red-proof file carried the string `# noqa: F821` in an explanatory comment. ruff honoured it as a real suppression: `All checks passed!`. Had that reached CI, the Lint job would have gone green in a run whose whole purpose was proving it could go red — a red-proof that proves nothing, in the exact shape the goal warns about. Caught by running the pinned command locally before pushing. **Run every planted defect locally first and confirm it actually fires.**
 2. **`gh pr edit --body-file` reported a GraphQL error and did NOT apply the body** — `Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`. The PR sat carrying the literal string `PLACEHOLDER`. Caught by `gh pr view --json body`; re-applied with `gh api -X PATCH .../pulls/17 -F body=@<file>` and verified by a second read-back (5,691 bytes, both run URLs present, placeholder gone). **A PR body is only as good as its read-back** — the same discipline `publication/v1` demands for branches. This reproduces a sibling lane's report exactly.
 3. **`uv sync --frozen` is safe in THIS repo because it commits `uv.lock`** — and is a hard-fail in the lockfile-less sibling repos, as is `setup-uv`'s `enable-cache: true` (it keys on `**/uv.lock`). Check for a committed lockfile before copying this workflow.
-4. **A per-lane note should carry no cross-lane ordinal.** Several lanes have now filed a stale count and then spent a second erratum correcting it. State what your repo delivered and what you observed.
+4. **`.gitignore`'s `*.log` silently swallowed the committed evidence.** Both CI job logs were saved as `*.log`, `git add <dir>` reported no error, and `git commit` succeeded — with the evidence absent from the tree. Caught by reading `git status --short` back against what was written to disk, then confirmed with `git check-ignore -v` (`.gitignore:46:*.log`). Renamed to `.txt`. **A clean `git add` + `git commit` is not proof a file was committed; only reading the staged set back is.**
+5. **A per-lane note should carry no cross-lane ordinal.** Several lanes have now filed a stale count and then spent a second erratum correcting it. State what your repo delivered and what you observed.
 
 ---
 
