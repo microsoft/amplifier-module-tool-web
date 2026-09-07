@@ -78,6 +78,7 @@ result = await tool.execute({"url": "https://example.com"})
 ## Configuration
 
 - `max_results`: Maximum search results to return (default: 5)
+- `search_timeout`: Max seconds for a single web_search before falling back to mock results (default: 30)
 - `timeout`: Request timeout in seconds (default: 10)
 - `max_size`: Maximum content size in bytes (default: 1MB)
 - `extract_text`: Extract text from HTML (default: True)
