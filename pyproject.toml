@@ -40,3 +40,19 @@ testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 asyncio_mode = "strict"
 
+# The test suite has always needed these and never declared them: tests/
+# imports amplifier_core.validation.* and relies on amplifier-core's pytest
+# plugin for the tool_module fixture, and `asyncio_mode = "strict"` above is
+# a pytest-asyncio setting. Before this group existed, a clean checkout of
+# this repo could not run its own tests at all -- `uv sync` installed no
+# pytest, so `uv run pytest` failed with "Failed to spawn: pytest". Shape and
+# contents mirror amplifier-module-provider-openai, the sibling reference
+# module. ruff is pinned exactly so a local run matches CI byte for byte.
+[dependency-groups]
+dev = [
+    "amplifier-core>=1.6.0",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "ruff==0.16.6",
+]
+
