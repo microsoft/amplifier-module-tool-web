@@ -1,0 +1,36 @@
+# Apply attempts for zc6t's web_fetch.patch against today's stock text
+# stock = amplifier_module_tool_web/__init__.py :: WebFetchTool.description @ 8bd784e (632 chars)
+# patch = amplifier-foundation main 4384805 : docs/lanes/zc6t-lean-head-ship/patches/tool-descriptions/web_fetch.patch
+
+--- 1. git apply --check ---
+error: corrupt patch at line 20
+exit=128
+
+--- 2. patch -p1 --dry-run -F0  (fuzz disabled) ---
+checking file web_fetch.description
+patch unexpectedly ends in middle of line
+Hunk #1 FAILED at 1.
+1 out of 1 hunk FAILED
+exit=1
+
+--- 3. patch -p1  (default fuzz) -- THE HAZARD ---
+patching file web_fetch.description
+patch unexpectedly ends in middle of line
+Hunk #1 succeeded at 1 with fuzz 2.
+exit=0
+resulting chars: 430   (authoritative web_fetch.lean.txt = 549)
+
+--- 4. diff: fuzzy-apply result  vs  authoritative web_fetch.lean.txt ---
+7c7
+< - Use these to decide if you need the full content via save_to_file
+\ No newline at end of file
+---
+> Binary content (PDFs, images, archives) cannot be returned inline as text and will be refused; use save_to_file to download it intact - the bytes are written to disk exactly as received.
+\ No newline at end of file
+exit=1
+
+CONCLUSION: the shipped .patch is malformed -- its final '-' line and final '+' line are
+concatenated with no separating newline (hunk header claims -1,15 +1,7; a strict parser
+counts 14/6). git apply rejects it. patch -p1 accepts it WITH FUZZ 2 and emits a 430-char
+hybrid that DROPS the entire binary-content paragraph and RETAINS a stale stock bullet.
+Hand-ported from web_fetch.lean.txt instead. Never force-applied.
