@@ -31,7 +31,7 @@ terminate in a verb that requires custody:
 |---|---|---|---|
 | **A** RESOLVED | `work_resolve` | yes | **no** — refused |
 | **B** RESOLVED AT THE CAP | `work_resolve` | yes | **no** — and the cap never bound anyway |
-| **C** BLOCKED | `work_release` | yes (GOAL.md: *"Release while you still HOLD the item"*) | **no** — a lane whose claim was refused never holds |
+| **C** BLOCKED | `work_release` | yes (GOAL.md: *"Release while you still HOLD the item"*) | **no** — refused, measured (below) |
 
 So the exhaustive set is empty for 18 of 19 lanes. That is the defect.
 
@@ -46,8 +46,17 @@ work_claim(item_id="model_performance-j1e6")     -> already claimed by agent-spa
 work_resolve(id="model_performance-j1e6", ...)   -> not currently holding 'model_performance-j1e6'
                                                     in this session -- refusing to resolve an item
                                                     this session did not claim
+work_release(id="model_performance-j1e6")        -> not currently holding 'model_performance-j1e6'
+                                                    in this session -- refusing to release an item
+                                                    this session did not claim
 work_status                                      -> holding: null
 ```
+
+**All three verbs are now measured, none inferred.** Branch C's `work_release` was the last one this
+lane had only *argued* was unreachable; it was called, and it refused for the same custody reason as
+`work_resolve`. The asymmetry is worth naming because it is the failure mode this whole artifact is
+about: a refusal you reasoned your way to is not a refusal you observed, and this lane had to be
+pushed twice before it stopped asserting and started calling.
 
 **A second, sharper fact.** `work_list(project="model_performance", status="held")` returns exactly
 one item — `model_performance-ytja` — and `work_stats` reports `held: 1`. **`j1e6` is not in live
