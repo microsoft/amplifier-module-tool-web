@@ -1,0 +1,87 @@
+{
+  "verified_at_head": "8bd784e2dca412d5c3eb9a1fa1ffa2b3e7131498",
+  "repo": "amplifier-module-tool-web",
+  "tool": "web_fetch",
+  "stock_chars": 632,
+  "lean_chars": 549,
+  "saved_chars": 83,
+  "stock_sha256": "0dca4afe64b2c52ae82f4131515577680d678f9f5f3758fcde0b27a50553475e",
+  "lean_sha256": "3b37d7cea7b563c4ea261b384ff2c4656fe82175fffe9f2fe5238173e4f7f0bc",
+  "zc6t_reported": {
+    "stock_chars": 632,
+    "lean_chars": 549,
+    "saved_chars": 83,
+    "missing_rules": []
+  },
+  "stock_unchanged_since_zc6t": true,
+  "mechanical_token_census": {
+    "stock_tokens": [
+      "200KB",
+      "PDFs",
+      "archives",
+      "images",
+      "save_to_file",
+      "total_bytes"
+    ],
+    "missing_in_lean": []
+  },
+  "semantic_clause_census": [
+    {
+      "clause": "purpose: fetch content from a web URL",
+      "present_in_lean": true
+    },
+    {
+      "clause": "200KB default content limit",
+      "present_in_lean": true
+    },
+    {
+      "clause": "save_to_file writes full content to a file",
+      "present_in_lean": true
+    },
+    {
+      "clause": "offset/limit paginate large content",
+      "present_in_lean": true
+    },
+    {
+      "clause": "binary kinds are enumerated",
+      "present_in_lean": true
+    },
+    {
+      "clause": "binary cannot be returned inline / refused",
+      "present_in_lean": true
+    },
+    {
+      "clause": "save_to_file downloads binary intact",
+      "present_in_lean": true
+    },
+    {
+      "clause": "bytes written exactly as received",
+      "present_in_lean": true
+    },
+    {
+      "clause": "response reports truncated",
+      "present_in_lean": true
+    },
+    {
+      "clause": "response reports total_bytes",
+      "present_in_lean": true
+    },
+    {
+      "clause": "total_bytes only when available",
+      "present_in_lean": true
+    },
+    {
+      "clause": "use these to decide whether to use save_to_file",
+      "present_in_lean": true
+    }
+  ],
+  "dropped_clauses": [],
+  "additions_not_in_stock": [
+    "'(returns metadata + preview)' -- accurate: _fetch_to_file returns metadata + preview (see __init__.py _fetch_to_file docstring and PREVIEW_SIZE)"
+  ],
+  "cosmetic_only": [
+    "em-dash '--' rendered as '-'",
+    "binary paragraph moved from 3rd to 4th position"
+  ],
+  "verdict": "NO WEAKENING. 12/12 stock clauses survive; 0 tokens lost."
+}

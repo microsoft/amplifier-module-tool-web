@@ -161,19 +161,11 @@ class WebFetchTool:
     name = "web_fetch"
     description = """Fetch content from a web URL.
 
-Content is limited to 200KB by default to avoid overwhelming responses.
-For larger content:
-- Use save_to_file parameter to save full content to a file
-- Use offset/limit parameters to paginate through large content
+Content is limited to 200KB by default; for more, set save_to_file to write the full content to a file (returns metadata + preview), or paginate with offset/limit.
 
-Binary content (PDFs, images, archives) cannot be returned inline as text and
-will be refused. Use save_to_file to download it intact -- the bytes are
-written to disk exactly as received.
+The response includes `truncated` (was content cut off) and `total_bytes` (original size, when available) - use them to decide whether to re-fetch with save_to_file.
 
-Response includes:
-- truncated: boolean indicating if content was cut off
-- total_bytes: original content size (when available)
-- Use these to decide if you need the full content via save_to_file"""
+Binary content (PDFs, images, archives) cannot be returned inline as text and will be refused; use save_to_file to download it intact - the bytes are written to disk exactly as received."""
 
     # Default limit: 200KB is reasonable for web content
     DEFAULT_LIMIT = 200 * 1024
