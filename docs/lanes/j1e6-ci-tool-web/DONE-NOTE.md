@@ -2,7 +2,7 @@
 
 **Item:** `model_performance-j1e6` (project `model_performance`)
 **Outcome:** **A — every deliverable DONE.** The cap did not bind.
-**`work_resolve` was NOT called, and could not be** — both doors measured, not assumed. See "The terminal verb" below.
+**Terminal verb: EXECUTED.** `work_resolve` succeeded on **`model_performance-f3h5`**, the per-repo child item filed for this repo and linked `relates-to` the parent — resolved 2026-09-07T20:15:37Z. `work_resolve` on the parent `j1e6` was tried and refused; see "The terminal verb" below.
 **Spend:** **$0.00** against a **$0** authority (`0 runs x 0 arms x $0 / 1.00 = $0.00`, slack `$0.00`). CI minutes only: 2 gating runs x 4 checks, plus 1 confirmation run. No API calls, no DTU, no containers, nothing registered in the infra ledger, nothing to tear down.
 **Draft PR:** https://github.com/microsoft/amplifier-module-tool-web/pull/17 — **NOT merged.** The merge is the manager's stage.
 
@@ -50,9 +50,29 @@ not currently holding 'model_performance-j1e6' in this session
 
 `work_reopen` would clear `closed_at` and move every throughput roll-up by one item. That is the manager's call, not a lane's, and it was deliberately not taken.
 
-**What was done instead:** the spec was read authoritatively with `work_list(item_id=...)` — full description and acceptance criteria, no claim, no mutation, no custody — every deliverable was completed, and completion was recorded with `work_erratum`, which is append-only and needs no claim.
+**What was done — and the second attempt that actually closed it.** The spec was read authoritatively with `work_list(item_id=...)` — full description and acceptance criteria, no claim, no mutation, no custody — every deliverable was completed, and completion was recorded with `work_erratum`.
 
-**Honest statement of terminal state:** every branch-A *deliverable* is DONE and shipped for landing. The branch-A *verb* was structurally unavailable to this lane. That gap is a defect in the per-lane goal template applied to a deliberately multi-lane item — Procedure 1 reads a refused claim as BLOCKED-and-stop, and Procedure 5 ends in a verb only the single holder can use — and filing `BLOCKED.md` over it would have been false, since the outcome was plainly reachable and was reached.
+That left Procedure 5's verb unexecuted, which was an **incomplete remedy**: this batch already had a working one, and it was sitting in my own `work_list` output unread. `model_performance-md4i` (amplifier-bundle-stories) records it verbatim — *"This item exists only because kp79 could not be held by its own lane; the per-repo-child remedy five lanes converged on is now demonstrated working here"* — and `model_performance-hgdi` (amplifier-bundle-converge) is the same shape.
+
+So the slice now carries **its own resolved item**:
+
+| | |
+|---|---|
+| **Item** | `model_performance-f3h5` |
+| **Title** | CI for microsoft/amplifier-module-tool-web — per-repo child of `model_performance-j1e6`, red-then-green proven |
+| **Link** | `relates-to` → `model_performance-j1e6` (via `work_dep`) |
+| **Status** | **resolved**, `closed_at 2026-09-07T20:15:37+00:00` |
+| **Carries** | the full user-readable summary — result, top finding, spend, what remains open |
+
+Read it back with `work_list(item_id="model_performance-f3h5")`.
+
+**Why this route and not `work_reopen`:** reopening `j1e6` clears `closed_at`, moves every throughput roll-up by one item, and the item is actively held and polled by sibling lanes. A per-repo child is additive and non-destructive — one new row, parent untouched.
+
+**The goal-template fix is now sharper than "claim if free, else proceed."** A lane that only proceeds still leaves its repo's outcome uncarried by any resolvable record. The template should say: *claim if free; if a sibling holds it, file a per-repo child linked `relates-to` the parent, claim that, and resolve that.* The parent stays a container the manager resolves once at batch close, and every repo's result lives on a row a later reader can find by id.
+
+**Superseded note:** the spec was read authoritatively with `work_list(item_id=...)` — full description and acceptance criteria, no claim, no mutation, no custody — every deliverable was completed, and completion was recorded with `work_erratum`, which is append-only and needs no claim.
+
+**Honest statement of terminal state:** every branch-A *deliverable* is DONE and shipped for landing, and the branch-A *verb* is EXECUTED — on `model_performance-f3h5`, the child item that carries this repo's result. It remains unavailable on the parent `j1e6`, and that is a property of the parent, not of this work. That gap is a defect in the per-lane goal template applied to a deliberately multi-lane item — Procedure 1 reads a refused claim as BLOCKED-and-stop, and Procedure 5 ends in a verb only the single holder can use — and filing `BLOCKED.md` over it would have been false, since the outcome was plainly reachable and was reached.
 
 ## The claim refusal, and why proceeding was the right read
 
