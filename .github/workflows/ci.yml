@@ -1,0 +1,64 @@
+name: CI
+
+# Deliberately NO path filters. A workflow that only runs when certain paths
+# change is green-by-omission on every other commit, and a repo this small has
+# no path that is safe to skip.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    # A hang must fail loudly and fast rather than sit at "in_progress" until
+    # the 6h default -- a stuck job reads as "not done yet", not "broken".
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # ruff is PINNED twice over: `ruff==0.16.6` in the dev dependency group
+      # and a hash-pinned entry in the committed uv.lock, reached here with
+      # --frozen so CI can never silently float to a newer ruff. `--isolated`
+      # ignores any ruff config that might appear later, and the rule set is
+      # pinned explicitly, so a lint result means the same thing next year.
+      - name: ruff check (pinned 0.16.6, pinned rule set)
+        run: uv run --frozen --group dev ruff check --isolated --select E4,E7,E9,F .
+
+  test:
+    name: Tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # requires-python = ">=3.11": cover the floor, the middle and current.
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # --frozen: fail if uv.lock has drifted from pyproject.toml rather than
+      # silently re-resolving to a different dependency set than the one that
+      # was reviewed. This repo commits uv.lock, so --frozen is safe here.
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+
+      # The repo's real suite: 13 tests. 7 behavioral + 1 structural inherited
+      # from amplifier-core's validation base classes, and 5 byte-for-byte
+      # pins on the shipped tool descriptions (added by #15, and until this
+      # workflow existed nothing ever executed them). This is NOT an import
+      # smoke.
+      - name: Run test suite
+        run: uv run --frozen --no-sync pytest -q
