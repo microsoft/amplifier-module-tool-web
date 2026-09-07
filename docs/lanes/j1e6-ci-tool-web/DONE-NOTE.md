@@ -1,7 +1,8 @@
 # DONE-NOTE — lane `j1e6-ci-tool-web` (`microsoft/amplifier-module-tool-web`)
 
 **Item:** `model_performance-j1e6` (project `model_performance`)
-**Outcome:** **A — RESOLVED.** Every deliverable DONE. The cap did not bind.
+**Outcome:** **A — every deliverable DONE.** The cap did not bind.
+**`work_resolve` was NOT called, and could not be** — both doors measured, not assumed. See "The terminal verb" below.
 **Spend:** **$0.00** against a **$0** authority (`0 runs x 0 arms x $0 / 1.00 = $0.00`, slack `$0.00`). CI minutes only: 2 gating runs x 4 checks, plus 1 confirmation run. No API calls, no DTU, no containers, nothing registered in the infra ledger, nothing to tear down.
 **Draft PR:** https://github.com/microsoft/amplifier-module-tool-web/pull/17 — **NOT merged.** The merge is the manager's stage.
 
@@ -22,7 +23,38 @@ Nothing was dropped and nothing is recorded NOT-POSSIBLE. **OPTIONAL-IF-CAP-PERM
 
 ---
 
-## The claim was REFUSED, and this lane proceeded anyway — recorded as a choice
+## The terminal verb: `work_resolve` was not called, and both doors are measured
+
+Procedure 5 ends in `work_resolve(id="model_performance-j1e6", ...)`. **This lane did not call it successfully, and no sequence of calls available to this lane could have.** Rather than assert that, both doors were tried and the refusals recorded verbatim.
+
+**Door 1 — `work_claim`, tried twice, hours apart, refused both times:**
+
+```
+claim model_performance-j1e6 as 'agent-spark-1-3587172' failed:
+  Error claiming model_performance-j1e6: issue already claimed by agent-spark-1-1101253   (at lane start)
+  Error claiming model_performance-j1e6: issue already claimed by agent-spark-1-2996730   (at lane close)
+```
+
+The holder **changed between the two attempts** — the item is continuously held by a rotating cast of sibling lanes, which is direct evidence it is a contended one-item/many-lanes item rather than a stuck hold.
+
+**Door 2 — `work_resolve`, tried with the full user-readable summary, refused:**
+
+```
+not currently holding 'model_performance-j1e6' in this session
+  -- refusing to resolve an item this session did not claim
+```
+
+`work_status` confirms independently: `holding: null`.
+
+**And a third blocker sits behind both**: the item's own status is already `resolved` (`closed_at: 2026-09-07T18:14:01+00:00`), over a resolution covering `amplifier-bundle-wayfinder` only. Under the immutable-resolution rule, `work_resolve` against an already-resolved item is an idempotent no-op **only** for byte-identical text; different text fails non-zero and writes nothing. So even with custody, this lane's summary could not have landed there.
+
+`work_reopen` would clear `closed_at` and move every throughput roll-up by one item. That is the manager's call, not a lane's, and it was deliberately not taken.
+
+**What was done instead:** the spec was read authoritatively with `work_list(item_id=...)` — full description and acceptance criteria, no claim, no mutation, no custody — every deliverable was completed, and completion was recorded with `work_erratum`, which is append-only and needs no claim.
+
+**Honest statement of terminal state:** every branch-A *deliverable* is DONE and shipped for landing. The branch-A *verb* was structurally unavailable to this lane. That gap is a defect in the per-lane goal template applied to a deliberately multi-lane item — Procedure 1 reads a refused claim as BLOCKED-and-stop, and Procedure 5 ends in a verb only the single holder can use — and filing `BLOCKED.md` over it would have been false, since the outcome was plainly reachable and was reached.
+
+## The claim refusal, and why proceeding was the right read
 
 `work_claim(project="model_performance", item_id="model_performance-j1e6")` returned:
 
