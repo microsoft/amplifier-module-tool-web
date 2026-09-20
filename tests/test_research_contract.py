@@ -430,3 +430,118 @@ async def test_exact_window_and_pagination_preserve_existing_fields(http_server)
     assert result.output["returned_bytes"] == len(content) - 7
     assert result.output["truncated"] is False
     assert result.output["total_bytes"] == len(content)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["/binary", "/compressed", "/stream"])
+async def test_download_cap_preserves_existing_file_for_known_compressed_and_chunked_bodies(
+    http_server, tmp_path, route
+):
+    base, _, _, release = http_server
+    path = tmp_path / "original.pdf"
+    path.write_bytes(b"original evidence")
+    tool = WebFetchTool({"blocked_domains": [], "max_download_bytes": 100})
+    result = await asyncio.wait_for(
+        tool.execute(
+            {"url": base + route, "save_to_file": str(path), "download_limit": 4}
+        ),
+        1,
+    )
+    assert not result.success and result.error["code"] == "download_too_large"
+    assert result.error["max_download_bytes"] == 4
+    assert path.read_bytes() == b"original evidence"
+    assert not list(tmp_path.glob(".amplifier-download-*"))
+    if route == "/stream":
+        assert not release.is_set()  # Does not drain a never-finished body.
+
+
+@pytest.mark.asyncio
+async def test_download_cancellation_keeps_destination_and_shared_transport(
+    http_server, tmp_path
+):
+    base, _, started, _ = http_server
+    path = tmp_path / "original.txt"
+    path.write_bytes(b"original")
+    async with aiohttp.ClientSession() as session:
+        tool = WebFetchTool({"blocked_domains": []}, shared_session=session)
+        task = asyncio.create_task(
+            tool.execute({"url": base + "/stream", "save_to_file": str(path)})
+        )
+        await asyncio.wait_for(started.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not session.closed
+    assert path.read_bytes() == b"original"
+    assert not list(tmp_path.glob(".amplifier-download-*"))
+
+
+@pytest.mark.asyncio
+async def test_complete_pdf_at_exact_cap_retains_bytes_hash_and_source(
+    http_server, tmp_path
+):
+    base, _, _, _ = http_server
+    body = b"%PDF-test\x00binary"
+    target = tmp_path / "download.pdf"
+    target.write_bytes(b"old")
+    result = await WebFetchTool(
+        {"blocked_domains": [], "max_download_bytes": len(body)}
+    ).execute({"url": base + "/binary", "save_to_file": str(target)})
+    assert result.success and target.read_bytes() == body
+    assert result.output["truncated"] is False
+    assert result.output["download_limit"] == result.output["total_bytes"] == len(body)
+    assert (
+        result.output["content_sha256"]
+        == result.output["saved_sha256"]
+        == module.sha256(body).hexdigest()
+    )
+    assert result.output["source_url"] == base + "/binary"
+
+
+@pytest.mark.asyncio
+async def test_download_replace_failure_cleans_temporary_and_preserves_destination(
+    http_server, tmp_path, monkeypatch
+):
+    import os
+
+    base, _, _, _ = http_server
+    path = tmp_path / "original.pdf"
+    path.write_bytes(b"original")
+
+    def fail(*args):
+        raise OSError("synthetic replacement failure")
+
+    monkeypatch.setattr(os, "replace", fail)
+    result = await WebFetchTool({"blocked_domains": []}).execute(
+        {"url": base + "/binary", "save_to_file": str(path)}
+    )
+    assert not result.success
+    assert path.read_bytes() == b"original"
+    assert not list(tmp_path.glob(".amplifier-download-*"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [0, -1, True, "10", 101])
+async def test_download_limit_cannot_raise_host_cap_or_accept_invalid_values(
+    http_server, limit
+):
+    base, requests, _, _ = http_server
+    result = await WebFetchTool(
+        {"blocked_domains": [], "max_download_bytes": 100}
+    ).execute(
+        {
+            "url": base + "/binary",
+            "save_to_file": "never-created.pdf",
+            "download_limit": limit,
+        }
+    )
+    assert not result.success and result.error["code"] == "invalid_input"
+    assert requests == []
+
+
+@pytest.mark.parametrize(
+    "cap", [0, -1, True, "10", WebFetchTool.MAX_DOWNLOAD_LIMIT + 1]
+)
+def test_invalid_host_download_cap_is_rejected(cap):
+    with pytest.raises(ValueError, match="max_download_bytes"):
+        WebFetchTool({"max_download_bytes": cap})

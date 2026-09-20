@@ -17,10 +17,10 @@ guards against.
 from amplifier_module_tool_web import WebFetchTool
 from amplifier_module_tool_web import WebSearchTool
 
-# web_fetch: stock 632 chars -> lean 549 chars (-83).
+# web_fetch: bounded download contract; 601 characters.
 WEB_FETCH_DESCRIPTION_V1 = """Fetch content from a web URL.
 
-Content is limited to 200KB by default; for more, set save_to_file to write the full content to a file (returns metadata + preview), or paginate with offset/limit.
+Inline content defaults to 200KB; paginate with offset/limit. save_to_file writes the full response within the configured download cap (20MB default), returning metadata + preview. download_limit can lower that cap.
 
 The response includes `truncated` (was content cut off) and `total_bytes` (original size, when available) - use them to decide whether to re-fetch with save_to_file.
 
@@ -36,7 +36,7 @@ def test_web_fetch_description_is_pinned_byte_for_byte():
 
 
 def test_web_fetch_description_char_count():
-    assert len(WebFetchTool.description) == 549
+    assert len(WebFetchTool.description) == 601
 
 
 def test_web_search_description_is_pinned_byte_for_byte():
@@ -58,4 +58,6 @@ def test_binary_content_guidance_survives():
     web_fetch.lean.txt instead. This test fails if that loss ever lands.
     """
     assert "Binary content (PDFs, images, archives)" in WebFetchTool.description
-    assert "the bytes are written to disk exactly as received" in WebFetchTool.description
+    assert (
+        "the bytes are written to disk exactly as received" in WebFetchTool.description
+    )

@@ -16,7 +16,8 @@ Web tools for searching and fetching content from the internet.
 - Fetch and parse web pages
 - Extract text from HTML content
 - Domain allowlist/blocklist checks on the original URL and every redirect
-- Content size limits and timeout protection
+- Inline byte windows, bounded complete downloads and timeout protection
+- Atomic PDF/binary saves with original-byte and saved-byte SHA-256 evidence
 - Requested and final source URLs, with source IDs shared by search and fetch
 
 ## Prerequisites
@@ -89,6 +90,7 @@ Both tools mount through module `tool-web`, with tool names `web_search` and
 | `timeout` | `10` | Fetch deadline in seconds, including redirects and body consumption. Also the fallback for `search_timeout`. |
 | `default_limit` | `204800` | Default inline fetch byte window. Callers may override it using `limit` and paginate using `offset`. |
 | `extract_text` | `true` | Extract text from HTML. |
+| `max_download_bytes` | `20971520` (20 MiB) | Maximum decoded complete-download body; integer from1 through268435456. A caller may lower it with `download_limit`, never raise host policy. |
 | `allowed_domains` | `[]` | Existing domain allowlist; empty allows all otherwise permitted domains. |
 | `blocked_domains` | local-address patterns | Existing blocklist, checked before every request including redirect hops. |
 | `working_dir` | session capability | Base directory for relative `save_to_file` paths. |
@@ -128,8 +130,20 @@ truncated inline fetch stops reading instead of draining the entire response.
 compressed response's Content-Length is not mistaken for its decoded size.
 The byte window applies before optional HTML extraction; the truncation notice
 adds a small amount of text. `save_to_file` still requests full content and returns
-a bounded preview, preserving binary files byte for byte. It retains the existing
-full-download memory behavior and is not a bounded-download API.
+a bounded preview, preserving binary files byte for byte. Complete downloads,
+including PDFs, stop at the configured `max_download_bytes` ceiling (20 MiB by
+default). `download_limit` may lower that ceiling for one request. Both declared
+length and actual decoded streamed bytes are checked; compressed or chunked
+responses cannot bypass the limit. A `download_too_large` failure does not save a
+partial file or replace an existing destination. Timeout and cancellation also
+leave the destination unchanged. A successful full download is atomically saved;
+temporary files are removed after failed writes. Source and saved SHA-256 fields
+identify the fetched bytes and any HTML text transformation separately.
+
+PDF retrieval preserves the original binary document for an installed PDF reader
+or artifact runtime; this tool does not extract page text or perform OCR. Binary
+bytes are never decoded into fake text evidence. The maximum configurable ceiling
+is256 MiB, and complete bodies are buffered within that finite bound.
 
 Cancellation propagates from both tools. DDGS is synchronous: cancelling an await
 does not forcibly terminate an already-running provider thread, which may finish

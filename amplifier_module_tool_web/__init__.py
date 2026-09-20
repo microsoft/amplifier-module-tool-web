@@ -250,7 +250,7 @@ class WebFetchTool:
     name = "web_fetch"
     description = """Fetch content from a web URL.
 
-Content is limited to 200KB by default; for more, set save_to_file to write the full content to a file (returns metadata + preview), or paginate with offset/limit.
+Inline content defaults to 200KB; paginate with offset/limit. save_to_file writes the full response within the configured download cap (20MB default), returning metadata + preview. download_limit can lower that cap.
 
 The response includes `truncated` (was content cut off) and `total_bytes` (original size, when available) - use them to decide whether to re-fetch with save_to_file.
 
@@ -260,6 +260,8 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
     DEFAULT_LIMIT = 200 * 1024
     CHUNK_SIZE = 8192
     PREVIEW_SIZE = 1000
+    DEFAULT_DOWNLOAD_LIMIT = 20 * 1024 * 1024
+    MAX_DOWNLOAD_LIMIT = 256 * 1024 * 1024
 
     # Content types that are always binary. Used only as a supporting signal --
     # the NUL-byte check in _looks_binary is the primary, structural test.
@@ -300,6 +302,16 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
         self.config = config
         self.timeout = config.get("timeout", 10)
         self.default_limit = config.get("default_limit", self.DEFAULT_LIMIT)
+        self.max_download_bytes = config.get(
+            "max_download_bytes", self.DEFAULT_DOWNLOAD_LIMIT
+        )
+        if (
+            type(self.max_download_bytes) is not int
+            or not 1 <= self.max_download_bytes <= self.MAX_DOWNLOAD_LIMIT
+        ):
+            raise ValueError(
+                "max_download_bytes must be an integer from 1 through 268435456"
+            )
         self.allowed_domains = config.get("allowed_domains", [])
         self.blocked_domains = config.get(
             "blocked_domains",
@@ -332,6 +344,12 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
                     "description": "Save full content to this file path instead of returning in response. "
                     "Useful for large pages. Returns metadata + preview when set.",
                 },
+                "download_limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": self.max_download_bytes,
+                    "description": "Maximum decoded body bytes for save_to_file. May lower, never raise, the configured cap. An incomplete download does not replace the destination.",
+                },
                 "offset": {
                     "type": "integer",
                     "description": "Start reading from byte N (default 0). Use for pagination.",
@@ -358,6 +376,18 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
         save_to_file = input.get("save_to_file")
         offset = input.get("offset", 0)
         limit = input.get("limit", self.default_limit)
+        download_limit = input.get("download_limit", self.max_download_bytes)
+        if (
+            type(download_limit) is not int
+            or not 1 <= download_limit <= self.max_download_bytes
+        ):
+            return ToolResult(
+                success=False,
+                error={
+                    "code": "invalid_input",
+                    "message": "download_limit must be a positive integer no greater than the configured download cap",
+                },
+            )
 
         if (
             type(offset) is not int
@@ -413,7 +443,7 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
                     # Stream content with hard limit to avoid memory issues
                     if save_to_file:
                         return await self._fetch_to_file(
-                            response, url, save_to_file, declared_size
+                            response, url, save_to_file, declared_size, download_limit
                         )
                     else:
                         return await self._fetch_with_limit(
@@ -566,15 +596,35 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
         url: str,
         file_path: str,
         declared_size: Optional[int],
+        download_limit: Optional[int] = None,
     ) -> ToolResult:
-        """Fetch full content and save to file, return metadata + preview."""
+        """Bound a complete download and atomically publish only complete content."""
+        import os
         from pathlib import Path
+        import tempfile
 
+        cap = self.max_download_bytes if download_limit is None else download_limit
+
+        def oversized():
+            return ToolResult(
+                success=False,
+                error={
+                    "code": "download_too_large",
+                    "message": "The response exceeds the download cap; the destination was not changed",
+                    "max_download_bytes": cap,
+                },
+            )
+
+        if declared_size is not None and declared_size > cap:
+            return oversized()
         chunks: list[bytes] = []
         total_bytes = 0
 
-        # Stream entire content
+        # Enforce the actual decoded size even without a trustworthy length
+        # header (including chunked and compressed responses).
         async for chunk in response.content.iter_chunked(self.CHUNK_SIZE):
+            if total_bytes + len(chunk) > cap:
+                return oversized()
             chunks.append(chunk)
             total_bytes += len(chunk)
 
@@ -605,12 +655,24 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
             # Resolve relative paths against working_dir (from session.working_dir capability)
             if not path.is_absolute() and self.working_dir:
                 path = Path(self.working_dir) / path
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if is_binary:
-                # Preserve the original bytes verbatim
-                path.write_bytes(raw_content)
-            else:
-                path.write_text(text, encoding="utf-8")
+            # Preserve existing symlink-following behavior, but never expose
+            # a partially written destination. Temporary files are private and
+            # removed if writing or atomic replacement fails.
+            destination = path.resolve()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            pending = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    dir=destination.parent, prefix=".amplifier-download-", delete=False
+                ) as stream:
+                    pending = Path(stream.name)
+                    stream.write(raw_content if is_binary else text.encode("utf-8"))
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(pending, destination)
+            finally:
+                if pending is not None:
+                    pending.unlink(missing_ok=True)
         except Exception as e:
             return ToolResult(
                 success=False, error={"message": f"Failed to write file: {e}"}
@@ -644,6 +706,11 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
                 "total_bytes": total_bytes,
                 "saved_to": str(path),
                 "saved_bytes": saved_bytes,
+                "download_limit": cap,
+                "content_sha256": sha256(raw_content).hexdigest(),
+                "saved_sha256": sha256(
+                    raw_content if is_binary else text.encode("utf-8")
+                ).hexdigest(),
             },
         )
 
