@@ -6,17 +6,18 @@ Web tools for searching and fetching content from the internet.
 
 ### WebSearchTool
 
-- **Real web search** using DuckDuckGo (no API key required)
-- Automatic fallback to mock results if search fails
-- Configurable max results
-- Returns structured results with title, URL, and snippet
+- **Real web search** using DDGS (no API key required; its default is automatic backend selection)
+- Explicit failures for provider errors, rate limits, and timeouts; no synthetic fallback
+- Bounded result counts, titles, and snippets with source URL attribution
+- Visibly labeled mock mode available only through explicit development configuration
 
 ### WebFetchTool
 
 - Fetch and parse web pages
 - Extract text from HTML content
-- Domain allowlist/blocklist support
+- Domain allowlist/blocklist checks on the original URL and every redirect
 - Content size limits and timeout protection
+- Requested and final source URLs, with source IDs shared by search and fetch
 
 ## Prerequisites
 
@@ -52,10 +53,10 @@ tool = WebSearchTool({"max_results": 5})
 # Execute search
 result = await tool.execute({"query": "Python programming"})
 
-# Results include:
-# - title: Page title
-# - url: Page URL
-# - snippet: Brief description
+# Check result.success before using result.output as evidence.
+# Successful output includes query, results, count, provider, backend,
+# mock (False in normal use), and retrieved_at (UTC ISO 8601).
+# Each result includes title, url, snippet, source_url, source_id, truncated.
 ```
 
 ### Web Fetch
@@ -77,16 +78,71 @@ result = await tool.execute({"url": "https://example.com"})
 
 ## Configuration
 
-- `max_results`: Maximum search results to return (default: 5)
-- `timeout`: Request timeout in seconds (default: 10)
-- `max_size`: Maximum content size in bytes (default: 1MB)
-- `extract_text`: Extract text from HTML (default: True)
-- `allowed_domains`: List of allowed domains (empty = all allowed)
-- `blocked_domains`: List of blocked domains (includes localhost by default)
+Both tools mount through module `tool-web`, with tool names `web_search` and
+`web_fetch`. Existing input names and successful output fields remain available.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `search_engine` | `ddgs` | Real DDGS search using its automatic backend selection. `duckduckgo` selects that specific DDGS backend. `mock` explicitly enables development fixtures. Other values fail configuration. |
+| `max_results` | `5` | Maximum search results; integer from 1 through 50. |
+| `search_timeout` | `timeout` or `10` | Positive finite search deadline in seconds; also passed to the DDGS HTTP client. |
+| `timeout` | `10` | Fetch deadline in seconds, including redirects and body consumption. Also the fallback for `search_timeout`. |
+| `default_limit` | `204800` | Default inline fetch byte window. Callers may override it using `limit` and paginate using `offset`. |
+| `extract_text` | `true` | Extract text from HTML. |
+| `allowed_domains` | `[]` | Existing domain allowlist; empty allows all otherwise permitted domains. |
+| `blocked_domains` | local-address patterns | Existing blocklist, checked before every request including redirect hops. |
+| `working_dir` | session capability | Base directory for relative `save_to_file` paths. |
+
+Search queries must be non-empty strings of at most 4096 characters. Returned
+titles and snippets are capped at 512 and 2000 characters; `truncated` indicates
+clipping. Source URLs are preserved exactly (up to 8192 characters); malformed
+provider results fail instead of receiving invented attribution. Duplicate exact
+URLs are returned once. `source_id` is `web-` followed by the first 16 hexadecimal
+characters of the SHA-256 of the exact source URL; it identifies that URL, not a
+verified claim or an immutable content snapshot.
+
+Search failures return `success: false` with an error containing `code`,
+`message`, `provider`, and `retryable`. Codes are `invalid_input`, `search_timeout`,
+`search_rate_limited`, and `search_failed`. Raw provider exception text is not
+returned. An actual empty result list is a successful result with `count: 0`.
+DDGS can instead raise an exception for no results; that remains an explicit
+failure because it cannot reliably be distinguished from a provider outage.
+
+Mock mode is for tests/development only:
+
+```python
+tool = WebSearchTool({"search_engine": "mock"})
+```
+
+The output has `mock: true`, `provider: "mock"`, and a warning; each row has a
+`[MOCK]` title and `mock: true`. These are synthetic fixtures, never web evidence.
+Previously, `search_engine` was ignored and provider errors silently produced
+mock success. Remove any old `search_engine: mock` setting from production
+configuration to use real search. `api_key` is not used by the DDGS backend.
+
+Fetch keeps the original `url` field and adds `requested_url`, `source_url` (the
+final URL after redirects), `source_id`, `retrieved_at`, and `status_code`.
+`offset` must be a non-negative integer and `limit` a positive integer. A
+truncated inline fetch stops reading instead of draining the entire response.
+`total_bytes` is `null` when the total cannot be known without reading more; a
+compressed response's Content-Length is not mistaken for its decoded size.
+The byte window applies before optional HTML extraction; the truncation notice
+adds a small amount of text. `save_to_file` still requests full content and returns
+a bounded preview, preserving binary files byte for byte. It retains the existing
+full-download memory behavior and is not a bounded-download API.
+
+Cancellation propagates from both tools. DDGS is synchronous: cancelling an await
+does not forcibly terminate an already-running provider thread, which may finish
+under its own timeout. It cannot publish a late result. Fetch closes owned HTTP
+sessions and leaves shared sessions open for their owner to manage.
+
+The existing domain matching policy is unchanged; redirect checking does not add
+DNS/IP resolution enforcement. Callers requiring network-level restrictions must
+apply them at the host or network boundary.
 
 ## Dependencies
 
-- `ddgs`: DuckDuckGo search (no API key required)
+- `ddgs`: DDGS metasearch client (no API key required)
 - `aiohttp`: Async HTTP client
 - `beautifulsoup4`: HTML parsing and text extraction
 - `amplifier-core`: Core amplifier functionality
