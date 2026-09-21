@@ -8,15 +8,20 @@ __amplifier_module_type__ = "tool"
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from hashlib import sha256
+from math import isfinite
 from typing import Any
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import aiohttp
 from amplifier_core import ModuleCoordinator
 from amplifier_core import ToolResult
 from bs4 import BeautifulSoup
 from ddgs import DDGS
+from ddgs.exceptions import RatelimitException, TimeoutException
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +38,13 @@ async def mount(coordinator: ModuleCoordinator, config: dict[str, Any] | None = 
             config["working_dir"] = working_dir
             logger.debug(f"Using session.working_dir: {working_dir}")
 
+    search_tool = WebSearchTool(config)
+
     # Create shared session at mount time for connection reuse
     shared_session = aiohttp.ClientSession()
 
     tools = [
-        WebSearchTool(config),
+        search_tool,
         WebFetchTool(config, shared_session=shared_session),
     ]
 
@@ -58,17 +65,41 @@ async def mount(coordinator: ModuleCoordinator, config: dict[str, Any] | None = 
     return cleanup
 
 
+def _source_metadata(url: str) -> dict[str, str]:
+    """Stable identity for an exact source URL; never rewrite attribution URLs."""
+    return {
+        "source_url": url,
+        "source_id": "web-" + sha256(url.encode("utf-8")).hexdigest()[:16],
+    }
+
+
 class WebSearchTool:
-    """Simple web search tool (mock implementation)."""
+    """Bounded DDGS search with explicit, labeled development fixtures."""
 
     name = "web_search"
     description = "Search the web for information"
+    MAX_QUERY_LENGTH = 4096
+    MAX_TITLE_LENGTH = 512
+    MAX_SNIPPET_LENGTH = 2000
+    MAX_URL_LENGTH = 8192
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
-        self.search_engine = config.get("search_engine", "mock")
-        self.api_key = config.get("api_key")
+        self.search_engine = config.get("search_engine", "ddgs")
+        if self.search_engine not in {"ddgs", "duckduckgo", "mock"}:
+            raise ValueError("search_engine must be ddgs, duckduckgo, or mock")
+        self.backend = "duckduckgo" if self.search_engine == "duckduckgo" else "auto"
         self.max_results = config.get("max_results", 5)
+        if type(self.max_results) is not int or not 1 <= self.max_results <= 50:
+            raise ValueError("max_results must be an integer between 1 and 50")
+        self.timeout = config.get("search_timeout", config.get("timeout", 10))
+        if (
+            isinstance(self.timeout, bool)
+            or not isinstance(self.timeout, (int, float))
+            or not isfinite(self.timeout)
+            or self.timeout <= 0
+        ):
+            raise ValueError("search_timeout must be a finite positive number")
 
     @property
     def input_schema(self) -> dict:
@@ -76,83 +107,141 @@ class WebSearchTool:
         return {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Search query to execute"}
+                "query": {
+                    "type": "string",
+                    "description": "Search query to execute",
+                    "minLength": 1,
+                    "maxLength": self.MAX_QUERY_LENGTH,
+                }
             },
             "required": ["query"],
         }
 
+    def _failure(
+        self, code: str, message: str, *, retryable: bool = False
+    ) -> ToolResult:
+        return ToolResult(
+            success=False,
+            output=message,
+            error={
+                "code": code,
+                "message": message,
+                "provider": "mock" if self.search_engine == "mock" else "ddgs",
+                "retryable": retryable,
+            },
+        )
+
     async def execute(self, input: dict[str, Any]) -> ToolResult:
-        """Execute web search."""
+        """Return actual results or an explicit failure, never synthetic fallback."""
         query = input.get("query")
-        if not query:
-            error_msg = "Query is required"
-            return ToolResult(
-                success=False, output=error_msg, error={"message": error_msg}
+        if not isinstance(query, str) or not query.strip():
+            return self._failure(
+                "invalid_input", "A non-empty query string is required"
             )
+        if len(query) > self.MAX_QUERY_LENGTH:
+            return self._failure("invalid_input", "Query exceeds 4096 characters")
 
+        is_mock = self.search_engine == "mock"
         try:
-            # Try real search first, fall back to mock if it fails
-            results = await self._real_search(query)
-
-            return ToolResult(
-                success=True,
-                output={"query": query, "results": results, "count": len(results)},
+            results = (
+                await self._mock_search(query)
+                if is_mock
+                else await asyncio.wait_for(self._real_search(query), self.timeout)
             )
-
-        except Exception as e:
-            logger.error(f"Search error: {e}")
-            error_msg = str(e)
-            return ToolResult(
-                success=False, output=error_msg, error={"message": error_msg}
+            output = {
+                "query": query,
+                "results": results,
+                "count": len(results),
+                "provider": "mock" if is_mock else "ddgs",
+                "backend": None if is_mock else self.backend,
+                "mock": is_mock,
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if is_mock:
+                output["warning"] = "Synthetic development fixtures; not web evidence."
+            return ToolResult(success=True, output=output)
+        except (TimeoutError, TimeoutException):
+            return self._failure(
+                "search_timeout", "Web search timed out", retryable=True
             )
+        except RatelimitException:
+            return self._failure(
+                "search_rate_limited",
+                "Search provider rate limited the request",
+                retryable=True,
+            )
+        except Exception as exc:
+            # Provider exceptions may contain credentials/proxy URLs or full HTML.
+            # Keep the returned failure bounded and do not log the raw exception.
+            logger.warning("Web search failed (%s)", type(exc).__name__)
+            return self._failure(
+                "search_failed",
+                "Web search failed; no results were retrieved",
+                retryable=True,
+            )
+        # CancelledError deliberately propagates to the calling task.
 
-    async def _real_search(self, query: str) -> list:
-        """Perform real web search using DuckDuckGo."""
-        try:
-            # Use sync DDGS in async context
-            def search_sync():
-                ddgs = DDGS()
-                results = []
-                for r in ddgs.text(query, max_results=self.max_results):  # pyright: ignore[reportAttributeAccessIssue]
-                    results.append(
-                        {
-                            "title": r.get("title", ""),
-                            "url": r.get("href", ""),
-                            "snippet": r.get("body", ""),
-                        }
-                    )
-                return results
+    async def _real_search(self, query: str) -> list[dict[str, Any]]:
+        """Use DDGS's actual backend, bounded both at its client and async boundary."""
 
-            # Run in thread pool to avoid blocking
-            loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(None, search_sync)
+        def search_sync():
+            rows = DDGS(timeout=self.timeout).text(
+                query, max_results=self.max_results, backend=self.backend
+            )
+            if not isinstance(rows, list):
+                raise ValueError("Invalid search provider response")
+            results = []
+            seen = set()
+            for row in rows[: self.max_results]:
+                if not isinstance(row, dict):
+                    raise ValueError("Invalid search result")
+                url = row.get("href") or row.get("url")
+                if not isinstance(url, str) or len(url) > self.MAX_URL_LENGTH:
+                    raise ValueError("Missing or oversized source URL")
+                parsed = urlparse(url)
+                if (
+                    parsed.scheme not in {"http", "https"}
+                    or not parsed.hostname
+                    or parsed.username
+                ):
+                    raise ValueError("Invalid source URL")
+                if url in seen:
+                    continue
+                seen.add(url)
+                title, snippet = row.get("title", ""), row.get("body", "")
+                if not isinstance(title, str) or not isinstance(snippet, str):
+                    raise ValueError("Invalid source text")
+                results.append(
+                    {
+                        "title": title[: self.MAX_TITLE_LENGTH],
+                        "url": url,
+                        "snippet": snippet[: self.MAX_SNIPPET_LENGTH],
+                        **_source_metadata(url),
+                        "truncated": len(title) > self.MAX_TITLE_LENGTH
+                        or len(snippet) > self.MAX_SNIPPET_LENGTH,
+                    }
+                )
             return results
 
-        except Exception as e:
-            logger.warning(f"DuckDuckGo search failed: {e}, falling back to mock")
-            # Fallback to mock on error
-            return await self._mock_search(query)
+        # Cancellation stops the await immediately. DDGS's synchronous HTTP work
+        # may finish in its thread, subject to its own timeout; it cannot publish
+        # a late tool result or turn cancellation into a successful fixture.
+        return await asyncio.to_thread(search_sync)
 
-    async def _mock_search(self, query: str) -> list:
-        """Mock search implementation."""
-        # In production, replace with actual search API call
+    async def _mock_search(self, query: str) -> list[dict[str, Any]]:
+        """Opt-in fixtures only. Never reached from a real provider's error path."""
         return [
             {
-                "title": f"Result 1 for {query}",
-                "url": "https://example.com/1",
-                "snippet": f"This is a mock search result for {query}...",
-            },
-            {
-                "title": f"Result 2 for {query}",
-                "url": "https://example.com/2",
-                "snippet": f"Another mock result about {query}...",
-            },
-            {
-                "title": f"Result 3 for {query}",
-                "url": "https://example.com/3",
-                "snippet": f"More information about {query}...",
-            },
-        ][: self.max_results]
+                "title": f"[MOCK] Result {index} for {query}"[: self.MAX_TITLE_LENGTH],
+                "url": f"https://example.com/{index}",
+                "snippet": "Synthetic development fixture; not retrieved web content.",
+                **_source_metadata(f"https://example.com/{index}"),
+                "mock": True,
+                "truncated": len(f"[MOCK] Result {index} for {query}")
+                > self.MAX_TITLE_LENGTH,
+            }
+            for index in range(1, min(self.max_results, 3) + 1)
+        ]
 
 
 class WebFetchTool:
@@ -161,7 +250,7 @@ class WebFetchTool:
     name = "web_fetch"
     description = """Fetch content from a web URL.
 
-Content is limited to 200KB by default; for more, set save_to_file to write the full content to a file (returns metadata + preview), or paginate with offset/limit.
+Inline content defaults to 200KB; paginate with offset/limit. save_to_file writes the full response within the configured download cap (20MB default), returning metadata + preview. download_limit can lower that cap.
 
 The response includes `truncated` (was content cut off) and `total_bytes` (original size, when available) - use them to decide whether to re-fetch with save_to_file.
 
@@ -171,6 +260,8 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
     DEFAULT_LIMIT = 200 * 1024
     CHUNK_SIZE = 8192
     PREVIEW_SIZE = 1000
+    DEFAULT_DOWNLOAD_LIMIT = 20 * 1024 * 1024
+    MAX_DOWNLOAD_LIMIT = 256 * 1024 * 1024
 
     # Content types that are always binary. Used only as a supporting signal --
     # the NUL-byte check in _looks_binary is the primary, structural test.
@@ -211,6 +302,16 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
         self.config = config
         self.timeout = config.get("timeout", 10)
         self.default_limit = config.get("default_limit", self.DEFAULT_LIMIT)
+        self.max_download_bytes = config.get(
+            "max_download_bytes", self.DEFAULT_DOWNLOAD_LIMIT
+        )
+        if (
+            type(self.max_download_bytes) is not int
+            or not 1 <= self.max_download_bytes <= self.MAX_DOWNLOAD_LIMIT
+        ):
+            raise ValueError(
+                "max_download_bytes must be an integer from 1 through 268435456"
+            )
         self.allowed_domains = config.get("allowed_domains", [])
         self.blocked_domains = config.get(
             "blocked_domains",
@@ -243,6 +344,12 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
                     "description": "Save full content to this file path instead of returning in response. "
                     "Useful for large pages. Returns metadata + preview when set.",
                 },
+                "download_limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": self.max_download_bytes,
+                    "description": "Maximum decoded body bytes for save_to_file. May lower, never raise, the configured cap. An incomplete download does not replace the destination.",
+                },
                 "offset": {
                     "type": "integer",
                     "description": "Start reading from byte N (default 0). Use for pagination.",
@@ -260,8 +367,8 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         """Fetch content from URL with streaming and truncation support."""
         url = input.get("url")
-        if not url:
-            error_msg = "URL is required"
+        if not isinstance(url, str) or not url:
+            error_msg = "URL string is required"
             return ToolResult(
                 success=False, output=error_msg, error={"message": error_msg}
             )
@@ -269,6 +376,32 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
         save_to_file = input.get("save_to_file")
         offset = input.get("offset", 0)
         limit = input.get("limit", self.default_limit)
+        download_limit = input.get("download_limit", self.max_download_bytes)
+        if (
+            type(download_limit) is not int
+            or not 1 <= download_limit <= self.max_download_bytes
+        ):
+            return ToolResult(
+                success=False,
+                error={
+                    "code": "invalid_input",
+                    "message": "download_limit must be a positive integer no greater than the configured download cap",
+                },
+            )
+
+        if (
+            type(offset) is not int
+            or offset < 0
+            or type(limit) is not int
+            or limit <= 0
+        ):
+            return ToolResult(
+                success=False,
+                error={
+                    "code": "invalid_input",
+                    "message": "offset must be a non-negative integer and limit a positive integer",
+                },
+            )
 
         # Validate URL
         if not self._is_valid_url(url):
@@ -285,11 +418,7 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
                 owns_session = True
 
             try:
-                async with session.get(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout),
-                    headers={"User-Agent": "Amplifier/1.0"},
-                ) as response:
+                async with self._request(session, url) as response:
                     # Check response
                     if response.status != 200:
                         return ToolResult(
@@ -301,14 +430,20 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
 
                     # Get content length hint (may not be accurate for compressed/chunked)
                     content_length_header = response.headers.get("Content-Length")
+                    # Content-Length describes the encoded representation, not
+                    # necessarily the decompressed bytes returned by aiohttp.
                     declared_size = (
-                        int(content_length_header) if content_length_header else None
+                        int(content_length_header)
+                        if content_length_header
+                        and content_length_header.isdigit()
+                        and not response.headers.get("Content-Encoding")
+                        else None
                     )
 
                     # Stream content with hard limit to avoid memory issues
                     if save_to_file:
                         return await self._fetch_to_file(
-                            response, url, save_to_file, declared_size
+                            response, url, save_to_file, declared_size, download_limit
                         )
                     else:
                         return await self._fetch_with_limit(
@@ -330,6 +465,32 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
             return ToolResult(
                 success=False, output=error_msg, error={"message": error_msg}
             )
+
+    @asynccontextmanager
+    async def _request(self, session: aiohttp.ClientSession, url: str):
+        """Check each redirect before requesting it, retaining the domain policy."""
+        current_url = url
+        # One deadline covers the entire redirect chain and body consumption.
+        async with asyncio.timeout(self.timeout):
+            for redirect_count in range(11):
+                async with session.get(
+                    current_url,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    headers={"User-Agent": "Amplifier/1.0"},
+                    allow_redirects=False,
+                ) as response:
+                    location = response.headers.get("Location")
+                    if response.status in {301, 302, 303, 307, 308} and location:
+                        if redirect_count == 10:
+                            raise ValueError("Too many redirects")
+                        current_url = urljoin(str(response.url), location)
+                        if not self._is_valid_url(current_url):
+                            raise ValueError(
+                                "Redirect targets an invalid or blocked URL"
+                            )
+                        continue
+                    yield response
+                    return
 
     async def _fetch_with_limit(
         self,
@@ -366,23 +527,9 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
                 truncated = True
                 break
 
-        # If we stopped early, try to get actual total size
-        actual_total: Optional[int] = None
-        if truncated:
-            # Read remaining to get total size (but don't store it)
-            remaining_size = 0
-            async for chunk in response.content.iter_chunked(self.CHUNK_SIZE):
-                remaining_size += len(chunk)
-            actual_total = total_read + remaining_size
-        else:
-            actual_total = total_read
-            # Check if content was truncated based on what we read vs limit
-            if total_read > offset + limit:
-                truncated = True
-
-        # Use declared size if available and larger
-        if declared_size and (actual_total is None or declared_size > actual_total):
-            actual_total = declared_size
+        # Never drain a large/infinite response just to count its bytes. When
+        # truncated, only a trustworthy length header can supply the total.
+        actual_total = declared_size if truncated else total_read
 
         # Combine chunks
         raw_content = b"".join(chunks)
@@ -429,6 +576,10 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
             success=True,
             output={
                 "url": url,
+                "requested_url": url,
+                **_source_metadata(str(response.url)),
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                "status_code": response.status,
                 "content": result_content,
                 "content_type": content_type,
                 "truncated": truncated,
@@ -445,15 +596,35 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
         url: str,
         file_path: str,
         declared_size: Optional[int],
+        download_limit: Optional[int] = None,
     ) -> ToolResult:
-        """Fetch full content and save to file, return metadata + preview."""
+        """Bound a complete download and atomically publish only complete content."""
+        import os
         from pathlib import Path
+        import tempfile
 
+        cap = self.max_download_bytes if download_limit is None else download_limit
+
+        def oversized():
+            return ToolResult(
+                success=False,
+                error={
+                    "code": "download_too_large",
+                    "message": "The response exceeds the download cap; the destination was not changed",
+                    "max_download_bytes": cap,
+                },
+            )
+
+        if declared_size is not None and declared_size > cap:
+            return oversized()
         chunks: list[bytes] = []
         total_bytes = 0
 
-        # Stream entire content
+        # Enforce the actual decoded size even without a trustworthy length
+        # header (including chunked and compressed responses).
         async for chunk in response.content.iter_chunked(self.CHUNK_SIZE):
+            if total_bytes + len(chunk) > cap:
+                return oversized()
             chunks.append(chunk)
             total_bytes += len(chunk)
 
@@ -484,12 +655,24 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
             # Resolve relative paths against working_dir (from session.working_dir capability)
             if not path.is_absolute() and self.working_dir:
                 path = Path(self.working_dir) / path
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if is_binary:
-                # Preserve the original bytes verbatim
-                path.write_bytes(raw_content)
-            else:
-                path.write_text(text, encoding="utf-8")
+            # Preserve existing symlink-following behavior, but never expose
+            # a partially written destination. Temporary files are private and
+            # removed if writing or atomic replacement fails.
+            destination = path.resolve()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            pending = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    dir=destination.parent, prefix=".amplifier-download-", delete=False
+                ) as stream:
+                    pending = Path(stream.name)
+                    stream.write(raw_content if is_binary else text.encode("utf-8"))
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(pending, destination)
+            finally:
+                if pending is not None:
+                    pending.unlink(missing_ok=True)
         except Exception as e:
             return ToolResult(
                 success=False, error={"message": f"Failed to write file: {e}"}
@@ -513,12 +696,21 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
             success=True,
             output={
                 "url": url,
+                "requested_url": url,
+                **_source_metadata(str(response.url)),
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                "status_code": response.status,
                 "content": preview,
                 "content_type": content_type,
                 "truncated": False,
                 "total_bytes": total_bytes,
                 "saved_to": str(path),
                 "saved_bytes": saved_bytes,
+                "download_limit": cap,
+                "content_sha256": sha256(raw_content).hexdigest(),
+                "saved_sha256": sha256(
+                    raw_content if is_binary else text.encode("utf-8")
+                ).hexdigest(),
             },
         )
 
