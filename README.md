@@ -91,9 +91,10 @@ Both tools mount through module `tool-web`, with tool names `web_search` and
 | `default_limit` | `204800` | Default inline fetch byte window. Callers may override it using `limit` and paginate using `offset`. |
 | `extract_text` | `true` | Extract text from HTML. |
 | `max_download_bytes` | `20971520` (20 MiB) | Maximum decoded complete-download body; integer from1 through268435456. A caller may lower it with `download_limit`, never raise host policy. |
-| `allowed_domains` | `[]` | Existing domain allowlist; empty allows all otherwise permitted domains. |
-| `blocked_domains` | local-address patterns | Existing blocklist, checked before every request including redirect hops. |
-| `working_dir` | session capability | Base directory for relative `save_to_file` paths. |
+| `allowed_domains` | `[]` | Hostname allowlist; entries match the exact host and its subdomains at DNS label boundaries. Empty allows all otherwise permitted public hosts. |
+| `blocked_domains` | local-address patterns | Hostname blocklist, checked before every request including redirect hops. Entries match the exact host and its subdomains at DNS label boundaries. |
+| `allow_private_networks` | `false` | Explicitly permit loopback, private, link-local, reserved, and other non-public destinations. Intended only for trusted local development. |
+| `working_dir` | session capability | Required sandbox root for `save_to_file`; caller paths must be relative and remain beneath it. |
 
 Search queries must be non-empty strings of at most 4096 characters. Returned
 titles and snippets are capped at 512 and 2000 characters; `truncated` indicates
@@ -139,6 +140,18 @@ partial file or replace an existing destination. Timeout and cancellation also
 leave the destination unchanged. A successful full download is atomically saved;
 temporary files are removed after failed writes. Source and saved SHA-256 fields
 identify the fetched bytes and any HTML text transformation separately.
+
+Fetch rejects URL userinfo, non-HTTP schemes, non-public IP literals, and DNS
+answers containing any non-public address by default. DNS is checked by the
+connector at connection time, and the same policy applies to every redirect hop.
+Setting `blocked_domains: []` removes only configured hostname blocks; it does
+not disable the non-public network restriction. Trusted local development must
+set `allow_private_networks: true` explicitly.
+
+`save_to_file` no longer accepts absolute, home-relative, drive-qualified, UNC,
+or parent-traversal paths. It requires `working_dir` and resolves the destination
+inside that directory before downloading and again immediately before the atomic
+replacement.
 
 PDF retrieval preserves the original binary document for an installed PDF reader
 or artifact runtime; this tool does not extract page text or perform OCR. Binary
