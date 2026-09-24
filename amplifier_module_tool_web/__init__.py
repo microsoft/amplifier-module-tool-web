@@ -7,18 +7,19 @@ Provides web search and fetch capabilities.
 __amplifier_module_type__ = "tool"
 
 import asyncio
+import ipaddress
 import logging
+import socket
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from hashlib import sha256
 from math import isfinite
-from typing import Any
-from typing import Optional
+from pathlib import Path, PureWindowsPath
+from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
-from amplifier_core import ModuleCoordinator
-from amplifier_core import ToolResult
+from amplifier_core import ModuleCoordinator, ToolResult
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from ddgs.exceptions import RatelimitException, TimeoutException
@@ -40,8 +41,14 @@ async def mount(coordinator: ModuleCoordinator, config: dict[str, Any] | None = 
 
     search_tool = WebSearchTool(config)
 
-    # Create shared session at mount time for connection reuse
-    shared_session = aiohttp.ClientSession()
+    # Resolve destinations at connection time so DNS rebinding cannot bypass
+    # the default private-network restriction.
+    connector = (
+        None
+        if config.get("allow_private_networks", False)
+        else aiohttp.TCPConnector(resolver=_PublicAddressResolver())
+    )
+    shared_session = aiohttp.ClientSession(connector=connector)
 
     tools = [
         search_tool,
@@ -71,6 +78,54 @@ def _source_metadata(url: str) -> dict[str, str]:
         "source_url": url,
         "source_id": "web-" + sha256(url.encode("utf-8")).hexdigest()[:16],
     }
+
+
+def _address_is_public(host: str) -> bool:
+    """Return whether a resolved address is safe for an outbound web fetch."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return address.is_global
+
+
+def _parse_ip_literal(
+    host: str,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Parse canonical and legacy IPv4 forms accepted by network stacks."""
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        pass
+
+    if host and all(character in "0123456789." for character in host):
+        try:
+            return ipaddress.IPv4Address(socket.inet_aton(host))
+        except OSError:
+            pass
+    return None
+
+
+class _PublicAddressResolver(aiohttp.abc.AbstractResolver):
+    """Resolve at connection time and reject DNS answers for non-public networks."""
+
+    def __init__(self):
+        self._resolver = aiohttp.resolver.DefaultResolver()
+
+    async def resolve(
+        self, host: str, port: int = 0, family: int = socket.AF_INET
+    ) -> list[dict[str, Any]]:
+        records = await self._resolver.resolve(host, port, family)
+        if not records or any(
+            not _address_is_public(record["host"]) for record in records
+        ):
+            raise OSError(f"Blocked non-public address for host: {host}")
+        return records
+
+    async def close(self) -> None:
+        await self._resolver.close()
 
 
 class WebSearchTool:
@@ -324,6 +379,9 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
                 "172.16.",
             ],
         )
+        self.allow_private_networks = config.get("allow_private_networks", False)
+        if type(self.allow_private_networks) is not bool:
+            raise ValueError("allow_private_networks must be a boolean")
         self.extract_text = config.get("extract_text", True)
         self._shared_session = shared_session
         # Working directory for resolving relative paths (from session.working_dir capability)
@@ -341,7 +399,7 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
                 },
                 "save_to_file": {
                     "type": "string",
-                    "description": "Save full content to this file path instead of returning in response. "
+                    "description": "Save full content to this relative path beneath working_dir instead of returning in response. "
                     "Useful for large pages. Returns metadata + preview when set.",
                 },
                 "download_limit": {
@@ -403,6 +461,16 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
                 },
             )
 
+        destination = None
+        if save_to_file is not None:
+            try:
+                destination = self._resolve_download_path(save_to_file)
+            except ValueError as error:
+                return ToolResult(
+                    success=False,
+                    error={"code": "invalid_input", "message": str(error)},
+                )
+
         # Validate URL
         if not self._is_valid_url(url):
             return ToolResult(
@@ -413,8 +481,21 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
             # Use shared session if available, otherwise create one for this request
             session = self._shared_session
             owns_session = False
-            if session is None or session.closed:
-                session = aiohttp.ClientSession()
+            secure_shared_session = session is not None and isinstance(
+                getattr(session.connector, "_resolver", None),
+                _PublicAddressResolver,
+            )
+            if (
+                session is None
+                or session.closed
+                or (not self.allow_private_networks and not secure_shared_session)
+            ):
+                connector = (
+                    None
+                    if self.allow_private_networks
+                    else aiohttp.TCPConnector(resolver=_PublicAddressResolver())
+                )
+                session = aiohttp.ClientSession(connector=connector)
                 owns_session = True
 
             try:
@@ -443,7 +524,11 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
                     # Stream content with hard limit to avoid memory issues
                     if save_to_file:
                         return await self._fetch_to_file(
-                            response, url, save_to_file, declared_size, download_limit
+                            response,
+                            url,
+                            destination,
+                            declared_size,
+                            download_limit,
                         )
                     else:
                         return await self._fetch_with_limit(
@@ -594,13 +679,12 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
         self,
         response: aiohttp.ClientResponse,
         url: str,
-        file_path: str,
+        destination: Path,
         declared_size: Optional[int],
         download_limit: Optional[int] = None,
     ) -> ToolResult:
         """Bound a complete download and atomically publish only complete content."""
         import os
-        from pathlib import Path
         import tempfile
 
         cap = self.max_download_bytes if download_limit is None else download_limit
@@ -651,14 +735,11 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
 
         # Write to file
         try:
-            path = Path(file_path).expanduser()
-            # Resolve relative paths against working_dir (from session.working_dir capability)
-            if not path.is_absolute() and self.working_dir:
-                path = Path(self.working_dir) / path
-            # Preserve existing symlink-following behavior, but never expose
-            # a partially written destination. Temporary files are private and
-            # removed if writing or atomic replacement fails.
-            destination = path.resolve()
+            # Re-resolve immediately before the write so an existing symlink
+            # cannot redirect the destination outside the configured root.
+            destination = self._resolve_download_path(
+                str(destination.relative_to(Path(self.working_dir).resolve()))
+            )
             destination.parent.mkdir(parents=True, exist_ok=True)
             pending = None
             try:
@@ -682,14 +763,14 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
         if is_binary:
             preview = (
                 f"[Binary content ({content_type or 'unknown type'}), "
-                f"{total_bytes} bytes saved verbatim to {file_path}. "
+                f"{total_bytes} bytes saved verbatim to {destination}. "
                 f"No text preview available.]"
             )
             saved_bytes = len(raw_content)
         else:
             preview = text[: self.PREVIEW_SIZE]
             if len(text) > self.PREVIEW_SIZE:
-                preview += f"\n\n[... {len(text) - self.PREVIEW_SIZE} more characters saved to {file_path}]"
+                preview += f"\n\n[... {len(text) - self.PREVIEW_SIZE} more characters saved to {destination}]"
             saved_bytes = len(text.encode("utf-8"))
 
         return ToolResult(
@@ -704,7 +785,7 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
                 "content_type": content_type,
                 "truncated": False,
                 "total_bytes": total_bytes,
-                "saved_to": str(path),
+                "saved_to": str(destination),
                 "saved_bytes": saved_bytes,
                 "download_limit": cap,
                 "content_sha256": sha256(raw_content).hexdigest(),
@@ -737,32 +818,82 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
             return True
         return ct in self.BINARY_TYPES
 
+    def _resolve_download_path(self, file_path: Any) -> Path:
+        """Resolve a caller path strictly beneath the configured working directory."""
+        if not isinstance(file_path, str) or not file_path.strip():
+            raise ValueError("save_to_file must be a non-empty relative path")
+        if not self.working_dir:
+            raise ValueError("save_to_file requires a configured working_dir")
+
+        requested = Path(file_path)
+        windows_path = PureWindowsPath(file_path)
+        if (
+            requested.is_absolute()
+            or windows_path.is_absolute()
+            or windows_path.drive
+            or file_path.startswith("~")
+        ):
+            raise ValueError("save_to_file must be relative to working_dir")
+
+        root = Path(self.working_dir).resolve()
+        destination = (root / requested).resolve()
+        try:
+            destination.relative_to(root)
+        except ValueError as error:
+            raise ValueError("save_to_file must remain within working_dir") from error
+        return destination
+
+    @staticmethod
+    def _normalize_hostname(host: str) -> str:
+        """Canonicalize a URL hostname for exact and subdomain matching."""
+        return host.rstrip(".").encode("idna").decode("ascii").lower()
+
+    @classmethod
+    def _domain_matches(cls, host: str, pattern: str) -> bool:
+        """Match a hostname exactly or at a DNS label boundary."""
+        normalized_pattern = cls._normalize_hostname(pattern.lstrip("."))
+        return host == normalized_pattern or host.endswith("." + normalized_pattern)
+
     def _is_valid_url(self, url: str) -> bool:
         """Validate URL for safety."""
         try:
             parsed = urlparse(url)
 
             # Must have scheme and netloc
-            if not parsed.scheme or not parsed.netloc:
+            if not parsed.scheme or not parsed.netloc or not parsed.hostname:
                 return False
 
             # Only allow http/https
             if parsed.scheme not in ["http", "https"]:
                 return False
 
+            if parsed.username is not None or parsed.password is not None:
+                return False
+
+            # Accessing port validates malformed and out-of-range values.
+            _ = parsed.port
+            host = self._normalize_hostname(parsed.hostname)
+
+            if not self.allow_private_networks:
+                literal = _parse_ip_literal(host)
+                if literal is not None and not _address_is_public(str(literal)):
+                    logger.warning(f"Blocked non-public address: {host}")
+                    return False
+
             # Check blocked domains
             for blocked in self.blocked_domains:
-                if blocked in parsed.netloc:
-                    logger.warning(f"Blocked domain: {parsed.netloc}")
+                if self._domain_matches(host, blocked):
+                    logger.warning(f"Blocked domain: {host}")
                     return False
 
             # Check allowed domains if configured
             if self.allowed_domains:
                 allowed = any(
-                    domain in parsed.netloc for domain in self.allowed_domains
+                    self._domain_matches(host, domain)
+                    for domain in self.allowed_domains
                 )
                 if not allowed:
-                    logger.warning(f"Domain not in allowlist: {parsed.netloc}")
+                    logger.warning(f"Domain not in allowlist: {host}")
                     return False
 
             return True

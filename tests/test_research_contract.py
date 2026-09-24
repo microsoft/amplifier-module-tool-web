@@ -3,12 +3,13 @@
 import asyncio
 import gzip
 import threading
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import aiohttp
-from aiohttp import web
 import pytest
 import pytest_asyncio
+from aiohttp import web
 from ddgs.exceptions import RatelimitException, TimeoutException
 
 import amplifier_module_tool_web as module
@@ -282,7 +283,7 @@ async def test_fetch_attribution_uses_final_url_and_matches_search_identity(
     http_server, monkeypatch
 ):
     base, requests, _, _ = http_server
-    tool = WebFetchTool({"blocked_domains": []})
+    tool = WebFetchTool({"blocked_domains": [], "allow_private_networks": True})
     result = await tool.execute({"url": base + "/redirect"})
     assert result.success
     assert result.output["url"] == result.output["requested_url"] == base + "/redirect"
@@ -301,7 +302,7 @@ async def test_fetch_attribution_uses_final_url_and_matches_search_identity(
 async def test_fetch_limit_does_not_drain_an_unfinished_response(http_server):
     base, _, _, release = http_server
     result = await asyncio.wait_for(
-        WebFetchTool({"blocked_domains": []}).execute(
+        WebFetchTool({"blocked_domains": [], "allow_private_networks": True}).execute(
             {"url": base + "/stream", "limit": 4}
         ),
         1,
@@ -317,9 +318,9 @@ async def test_fetch_limit_does_not_drain_an_unfinished_response(http_server):
 @pytest.mark.asyncio
 async def test_fetch_keeps_known_size_for_truncated_response(http_server):
     base, _, _, _ = http_server
-    result = await WebFetchTool({"blocked_domains": []}).execute(
-        {"url": base + "/final", "limit": 4}
-    )
+    result = await WebFetchTool(
+        {"blocked_domains": [], "allow_private_networks": True}
+    ).execute({"url": base + "/final", "limit": 4})
     assert result.success
     assert result.output["total_bytes"] == len(
         b"<title>Source</title><p>Verified text</p>"
@@ -330,9 +331,12 @@ async def test_fetch_keeps_known_size_for_truncated_response(http_server):
 @pytest.mark.asyncio
 async def test_redirect_cannot_bypass_domain_policy(http_server):
     base, requests, _, _ = http_server
-    result = await WebFetchTool({"blocked_domains": ["blocked.example"]}).execute(
-        {"url": base + "/blocked-redirect"}
-    )
+    result = await WebFetchTool(
+        {
+            "blocked_domains": ["blocked.example"],
+            "allow_private_networks": True,
+        }
+    ).execute({"url": base + "/blocked-redirect"})
     assert not result.success
     assert "blocked" in result.error["message"]
     assert requests == ["/blocked-redirect"]
@@ -341,9 +345,9 @@ async def test_redirect_cannot_bypass_domain_policy(http_server):
 @pytest.mark.asyncio
 async def test_redirect_count_is_bounded(http_server):
     base, requests, _, _ = http_server
-    result = await WebFetchTool({"blocked_domains": []}).execute(
-        {"url": base + "/redirect-loop"}
-    )
+    result = await WebFetchTool(
+        {"blocked_domains": [], "allow_private_networks": True}
+    ).execute({"url": base + "/redirect-loop"})
     assert not result.success
     assert "Too many redirects" in result.error["message"]
     assert len(requests) == 11
@@ -352,9 +356,9 @@ async def test_redirect_count_is_bounded(http_server):
 @pytest.mark.asyncio
 async def test_fetch_failure_is_not_content(http_server):
     base, _, _, _ = http_server
-    result = await WebFetchTool({"blocked_domains": []}).execute(
-        {"url": base + "/missing"}
-    )
+    result = await WebFetchTool(
+        {"blocked_domains": [], "allow_private_networks": True}
+    ).execute({"url": base + "/missing"})
     assert not result.success
     assert "HTTP 404" in result.error["message"]
 
@@ -363,7 +367,10 @@ async def test_fetch_failure_is_not_content(http_server):
 async def test_fetch_cancellation_propagates_and_keeps_shared_session_open(http_server):
     base, _, started, _ = http_server
     async with aiohttp.ClientSession() as session:
-        tool = WebFetchTool({"blocked_domains": []}, shared_session=session)
+        tool = WebFetchTool(
+            {"blocked_domains": [], "allow_private_networks": True},
+            shared_session=session,
+        )
         task = asyncio.create_task(tool.execute({"url": base + "/stream"}))
         await asyncio.wait_for(started.wait(), 1)
         task.cancel()
@@ -378,9 +385,9 @@ async def test_fetch_cancellation_propagates_and_keeps_shared_session_open(http_
 )
 async def test_fetch_rejects_invalid_window_without_request(http_server, extra):
     base, requests, _, _ = http_server
-    result = await WebFetchTool({"blocked_domains": []}).execute(
-        {"url": base + "/final", **extra}
-    )
+    result = await WebFetchTool(
+        {"blocked_domains": [], "allow_private_networks": True}
+    ).execute({"url": base + "/final", **extra})
     assert not result.success
     assert result.error["code"] == "invalid_input"
     assert requests == []
@@ -391,11 +398,17 @@ async def test_binary_download_preserves_bytes_and_source_metadata(
     http_server, tmp_path
 ):
     base, _, _, _ = http_server
-    tool = WebFetchTool({"blocked_domains": []})
+    tool = WebFetchTool(
+        {
+            "blocked_domains": [],
+            "allow_private_networks": True,
+            "working_dir": tmp_path,
+        }
+    )
     inline = await tool.execute({"url": base + "/binary"})
     assert not inline.success
     path = tmp_path / "download.pdf"
-    saved = await tool.execute({"url": base + "/binary", "save_to_file": str(path)})
+    saved = await tool.execute({"url": base + "/binary", "save_to_file": path.name})
     assert saved.success
     assert path.read_bytes() == b"%PDF-test\x00binary"
     assert saved.output["source_url"] == base + "/binary"
@@ -405,7 +418,7 @@ async def test_binary_download_preserves_bytes_and_source_metadata(
 @pytest.mark.asyncio
 async def test_compressed_length_is_not_reported_as_decoded_size(http_server):
     base, _, _, _ = http_server
-    tool = WebFetchTool({"blocked_domains": []})
+    tool = WebFetchTool({"blocked_domains": [], "allow_private_networks": True})
     partial = await tool.execute({"url": base + "/compressed", "limit": 4})
     assert partial.success
     assert partial.output["total_bytes"] is None
@@ -419,7 +432,13 @@ async def test_compressed_length_is_not_reported_as_decoded_size(http_server):
 @pytest.mark.asyncio
 async def test_exact_window_and_pagination_preserve_existing_fields(http_server):
     base, _, _, _ = http_server
-    tool = WebFetchTool({"blocked_domains": [], "extract_text": False})
+    tool = WebFetchTool(
+        {
+            "blocked_domains": [],
+            "allow_private_networks": True,
+            "extract_text": False,
+        }
+    )
     content = b"<title>Source</title><p>Verified text</p>"
     result = await tool.execute(
         {"url": base + "/final", "offset": 7, "limit": len(content) - 7}
@@ -440,10 +459,17 @@ async def test_download_cap_preserves_existing_file_for_known_compressed_and_chu
     base, _, _, release = http_server
     path = tmp_path / "original.pdf"
     path.write_bytes(b"original evidence")
-    tool = WebFetchTool({"blocked_domains": [], "max_download_bytes": 100})
+    tool = WebFetchTool(
+        {
+            "blocked_domains": [],
+            "allow_private_networks": True,
+            "max_download_bytes": 100,
+            "working_dir": tmp_path,
+        }
+    )
     result = await asyncio.wait_for(
         tool.execute(
-            {"url": base + route, "save_to_file": str(path), "download_limit": 4}
+            {"url": base + route, "save_to_file": path.name, "download_limit": 4}
         ),
         1,
     )
@@ -463,9 +489,16 @@ async def test_download_cancellation_keeps_destination_and_shared_transport(
     path = tmp_path / "original.txt"
     path.write_bytes(b"original")
     async with aiohttp.ClientSession() as session:
-        tool = WebFetchTool({"blocked_domains": []}, shared_session=session)
+        tool = WebFetchTool(
+            {
+                "blocked_domains": [],
+                "allow_private_networks": True,
+                "working_dir": tmp_path,
+            },
+            shared_session=session,
+        )
         task = asyncio.create_task(
-            tool.execute({"url": base + "/stream", "save_to_file": str(path)})
+            tool.execute({"url": base + "/stream", "save_to_file": path.name})
         )
         await asyncio.wait_for(started.wait(), 1)
         task.cancel()
@@ -485,8 +518,13 @@ async def test_complete_pdf_at_exact_cap_retains_bytes_hash_and_source(
     target = tmp_path / "download.pdf"
     target.write_bytes(b"old")
     result = await WebFetchTool(
-        {"blocked_domains": [], "max_download_bytes": len(body)}
-    ).execute({"url": base + "/binary", "save_to_file": str(target)})
+        {
+            "blocked_domains": [],
+            "allow_private_networks": True,
+            "max_download_bytes": len(body),
+            "working_dir": tmp_path,
+        }
+    ).execute({"url": base + "/binary", "save_to_file": target.name})
     assert result.success and target.read_bytes() == body
     assert result.output["truncated"] is False
     assert result.output["download_limit"] == result.output["total_bytes"] == len(body)
@@ -512,9 +550,13 @@ async def test_download_replace_failure_cleans_temporary_and_preserves_destinati
         raise OSError("synthetic replacement failure")
 
     monkeypatch.setattr(os, "replace", fail)
-    result = await WebFetchTool({"blocked_domains": []}).execute(
-        {"url": base + "/binary", "save_to_file": str(path)}
-    )
+    result = await WebFetchTool(
+        {
+            "blocked_domains": [],
+            "allow_private_networks": True,
+            "working_dir": tmp_path,
+        }
+    ).execute({"url": base + "/binary", "save_to_file": path.name})
     assert not result.success
     assert path.read_bytes() == b"original"
     assert not list(tmp_path.glob(".amplifier-download-*"))
@@ -527,7 +569,11 @@ async def test_download_limit_cannot_raise_host_cap_or_accept_invalid_values(
 ):
     base, requests, _, _ = http_server
     result = await WebFetchTool(
-        {"blocked_domains": [], "max_download_bytes": 100}
+        {
+            "blocked_domains": [],
+            "allow_private_networks": True,
+            "max_download_bytes": 100,
+        }
     ).execute(
         {
             "url": base + "/binary",
@@ -545,3 +591,103 @@ async def test_download_limit_cannot_raise_host_cap_or_accept_invalid_values(
 def test_invalid_host_download_cap_is_rejected(cap):
     with pytest.raises(ValueError, match="max_download_bytes"):
         WebFetchTool({"max_download_bytes": cap})
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://contoso.com.evil.example/",
+        "http://evilcontoso.com/",
+        "http://contoso.com@127.0.0.2/",
+    ],
+)
+def test_allowlist_requires_hostname_boundaries_and_rejects_userinfo(url):
+    tool = WebFetchTool({"allowed_domains": ["contoso.com"]})
+    assert not tool._is_valid_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://contoso.com/",
+        "https://api.contoso.com/",
+        "https://CONTOSO.COM./",
+    ],
+)
+def test_allowlist_accepts_exact_host_and_subdomains(url):
+    tool = WebFetchTool({"allowed_domains": ["contoso.com"]})
+    assert tool._is_valid_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/",
+        "http://2130706433/",
+        "http://[::1]/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://172.31.0.1/",
+    ],
+)
+def test_default_policy_rejects_non_public_ip_literals(url):
+    assert not WebFetchTool({})._is_valid_url(url)
+
+
+@pytest.mark.asyncio
+async def test_connection_resolver_rejects_any_non_public_dns_answer():
+    class MixedResolver:
+        async def resolve(self, host, port, family):
+            return [
+                {"host": "93.184.216.34"},
+                {"host": "10.0.0.1"},
+            ]
+
+    resolver = module._PublicAddressResolver()
+    resolver._resolver = MixedResolver()
+    with pytest.raises(OSError, match="non-public"):
+        await resolver.resolve("mixed.example", 443)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        "../escaped.txt",
+        "~/escaped.txt",
+        "C:\\escaped.txt",
+        "\\\\server\\share\\escaped.txt",
+    ],
+)
+async def test_download_rejects_paths_outside_working_dir_without_request(
+    http_server, tmp_path, file_path
+):
+    base, requests, _, _ = http_server
+    result = await WebFetchTool(
+        {
+            "blocked_domains": [],
+            "allow_private_networks": True,
+            "working_dir": tmp_path,
+        }
+    ).execute({"url": base + "/final", "save_to_file": file_path})
+    assert not result.success
+    assert result.error["code"] == "invalid_input"
+    assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_download_saves_nested_relative_path_within_working_dir(
+    http_server, tmp_path
+):
+    base, _, _, _ = http_server
+    result = await WebFetchTool(
+        {
+            "blocked_domains": [],
+            "allow_private_networks": True,
+            "working_dir": tmp_path,
+        }
+    ).execute({"url": base + "/final", "save_to_file": "nested/page.txt"})
+    destination = tmp_path / "nested" / "page.txt"
+    assert result.success
+    assert destination.exists()
+    assert Path(result.output["saved_to"]) == destination
