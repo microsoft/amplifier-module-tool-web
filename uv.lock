@@ -175,6 +175,7 @@ dependencies = [
     { name = "beautifulsoup4" },
     { name = "ddgs" },
     { name = "primp" },
+    { name = "yarl" },
 ]
 
 [package.dev-dependencies]
@@ -191,6 +192,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.11.0" },
     { name = "ddgs", specifier = ">=9.6.0" },
     { name = "primp", specifier = ">=0.15.0,<1.0.0" },
+    { name = "yarl", specifier = ">=1.17.0" },
 ]
 
 [package.metadata.requires-dev]
