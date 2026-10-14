@@ -13,6 +13,7 @@ dependencies = [
     "beautifulsoup4>=4.11.0",
     "ddgs>=9.6.0",
     "primp>=0.15.0,<1.0.0",
+    "yarl>=1.17.0",
 ]
 
 [project.entry-points."amplifier.modules"]

@@ -23,6 +23,7 @@ from amplifier_core import ModuleCoordinator, ToolResult
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from ddgs.exceptions import RatelimitException, TimeoutException
+from yarl import URL
 
 logger = logging.getLogger(__name__)
 
@@ -845,8 +846,8 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
 
     @staticmethod
     def _normalize_hostname(host: str) -> str:
-        """Canonicalize a URL hostname for exact and subdomain matching."""
-        return host.rstrip(".").encode("idna").decode("ascii").lower()
+        """Use the same IDNA encoding as aiohttp's request URL parser."""
+        return (URL.build(host=host.rstrip(".")).raw_host or "").lower()
 
     @classmethod
     def _domain_matches(cls, host: str, pattern: str) -> bool:
@@ -857,22 +858,22 @@ Binary content (PDFs, images, archives) cannot be returned inline as text and wi
     def _is_valid_url(self, url: str) -> bool:
         """Validate URL for safety."""
         try:
-            parsed = urlparse(url)
+            parsed = URL(url)
 
             # Must have scheme and netloc
-            if not parsed.scheme or not parsed.netloc or not parsed.hostname:
+            if not parsed.scheme or not parsed.raw_host:
                 return False
 
             # Only allow http/https
             if parsed.scheme not in ["http", "https"]:
                 return False
 
-            if parsed.username is not None or parsed.password is not None:
+            if parsed.user is not None or parsed.password is not None:
                 return False
 
             # Accessing port validates malformed and out-of-range values.
             _ = parsed.port
-            host = self._normalize_hostname(parsed.hostname)
+            host = self._normalize_hostname(parsed.raw_host)
 
             if not self.allow_private_networks:
                 literal = _parse_ip_literal(host)

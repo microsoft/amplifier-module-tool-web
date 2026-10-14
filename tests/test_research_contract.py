@@ -619,6 +619,17 @@ def test_allowlist_accepts_exact_host_and_subdomains(url):
     assert tool._is_valid_url(url)
 
 
+def test_domain_policy_matches_aiohttp_idna_encoding():
+    # IDNA2003 folds ß to ss, but aiohttp/yarl uses a distinct wire hostname.
+    url = "https://straße.example/"
+    assert not WebFetchTool({"allowed_domains": ["strasse.example"]})._is_valid_url(url)
+    assert WebFetchTool({"allowed_domains": ["xn--strae-oqa.example"]})._is_valid_url(url)
+    assert WebFetchTool({"allowed_domains": ["straße.example"]})._is_valid_url(url)
+    assert not WebFetchTool({"blocked_domains": ["straße.example"]})._is_valid_url(
+        "https://xn--strae-oqa.example/"
+    )
+
+
 @pytest.mark.parametrize(
     "url",
     [
