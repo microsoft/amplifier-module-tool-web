@@ -19,10 +19,10 @@ jobs:
     # the 6h default -- a stuck job reads as "not done yet", not "broken".
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
 
       # ruff is PINNED twice over: `ruff==0.16.6` in the dev dependency group
       # and a hash-pinned entry in the committed uv.lock, reached here with
@@ -42,10 +42,10 @@ jobs:
         # requires-python = ">=3.11": cover the floor, the middle and current.
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: ${{ matrix.python-version }}
 
